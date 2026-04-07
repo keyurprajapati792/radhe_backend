@@ -21,7 +21,7 @@ const app = express();
 
 const clientUrls = [
   "http://localhost:5173",
-  "https://keepitcut-frontend-s6y5.onrender.com",
+  "https://radhe-frontend.onrender.com",
 ];
 
 const corsOptions = {
