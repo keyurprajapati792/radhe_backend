@@ -15,12 +15,21 @@ const jobStepSchema = new mongoose.Schema({
     ref: "Machine",
   },
 
-  workers: [
-    {
+workers: [
+  {
+    workerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Worker",
+      required: true,
     },
-  ],
+    effort: {
+      type: Number, // percentage
+      default: 100,
+    },
+  },
+],
+
+
 
   startTime: Date,
   endTime: Date,

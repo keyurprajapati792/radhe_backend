@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 const jobSchema = new mongoose.Schema({
   clientId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -16,3 +18,8 @@ const jobSchema = new mongoose.Schema({
     default: "planned",
   },
 });
+
+
+const Job = mongoose.model("JOb", jobSchema);
+
+export default Job;
