@@ -1,4 +1,4 @@
-import { Worker } from "../models/worker.model.js";
+import Worker from "../models/worker.model.js";
 
 class WorkerService {
   async createWorker(data) {
@@ -33,14 +33,15 @@ class WorkerService {
 
     if (search) {
       filter.$or = [
-        { firstname: { $regex: search, $options: "i" } },
-        { lastname: { $regex: search, $options: "i" } },
+        { firstName: { $regex: search, $options: "i" } },
+        { lastName: { $regex: search, $options: "i" } },
         { phone: { $regex: search, $options: "i" } },
       ];
     }
 
     const [users, total] = await Promise.all([
       Worker.find(filter)
+        .populate("skills", "name currentHourlyCost")
         .select("-password")
         .sort({ createdAt: -1 })
         .skip(skip)

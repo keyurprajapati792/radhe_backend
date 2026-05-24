@@ -16,8 +16,11 @@ import productRoutes from "./routes/product.routes.js";
 import planningRoutes from "./routes/planning.routes.js";
 import jobRoutes from "./routes/job.routes.js";
 import jobStepRoutes from "./routes/jobStep.routes.js";
+import productionSlotRoutes from "./routes/productionSlot.routes.js";
+import schedulerRoutes from "./routes/scheduler.routes.js";
 import workConfigRoutes from "./routes/workConfig.routes.js";
 import holidayRoutes from "./routes/holday.routes.js";
+import SkillsRoutes from "./routes/skill.routes.js";
 
 dotenv.config();
 connectDB();
@@ -52,9 +55,12 @@ app.use("/v1/product", productRoutes);
 app.use("/v1/process", processRoutes);
 app.use("/v1/planning", planningRoutes);
 app.use("/v1/job", jobRoutes);
-app.use("/v1/jobStep", jobStepRoutes);
+app.use("/v1/job-step", jobStepRoutes);
+app.use("/v1/production-slot", productionSlotRoutes);
 app.use("/v1/work-config", workConfigRoutes);
 app.use("/v1/holiday", holidayRoutes);
+app.use("/v1/skills", SkillsRoutes);
+app.use("/v1/scheduler", schedulerRoutes);
 
 app.get("/", (req, res) => {
   res.send("API Running");

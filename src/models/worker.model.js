@@ -15,6 +15,12 @@ const workerSchema = mongoose.Schema({
     required: true,
     trim: true,
   },
+  skills: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Skill",
+    },
+  ],
   status: {
     type: String,
     enum: ["available", "leave", "terminated"],
@@ -30,4 +36,5 @@ const workerSchema = mongoose.Schema({
   },
 });
 
-export const Worker = mongoose.model("Worker", workerSchema);
+const Worker = mongoose.model("Worker", workerSchema);
+export default Worker;

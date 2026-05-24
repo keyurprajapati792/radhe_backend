@@ -1,9 +1,9 @@
-import express from "express"
-import { assignWorkers } from "../controllers/jobStep.controller.js";
+import express from "express";
 
-const router = express.Router()
+import JobStepController from "../controllers/jobStep.controller.js";
 
-router.put("/:id/assign-workers", assignWorkers);
+const router = express.Router();
 
+router.get("/:jobId", JobStepController.getJobSteps);
 
-export default router
+export default router;

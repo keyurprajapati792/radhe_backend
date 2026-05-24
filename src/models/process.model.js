@@ -10,7 +10,7 @@ const processSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  machineType: {
+  requiredMachineType: {
     type: String,
     required: true,
   },

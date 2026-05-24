@@ -1,55 +1,91 @@
-// services/job.service.js
-
 import Job from "../models/job.model.js";
-import JobStep from "../models/jobStep.model.js";
 import Process from "../models/process.model.js";
+import JobStep from "../models/jobStep.model.js";
 
 class JobService {
-  async create(data) {
-    const { clientId, productId, quantity, steps } = data;
+  async createJob(payload) {
+    const { productId, quantity } = payload;
 
-    if (!clientId || !productId || !quantity || !steps?.length) {
-      return {
-        success: false,
-        statustype: "BAD_REQUEST",
-        message: "Missing required fields",
-      };
-    }
+    const job = await Job.create(payload);
 
-    // 1️⃣ Create Job
-    const job = await Job.create({
-      clientId,
+    const processes = await Process.find({
       productId,
-      quantity,
-    });
+    }).sort({ sequence: 1 });
 
-    // 2️⃣ Create JobSteps
-    const jobSteps = [];
+    const steps = processes.map((process) => ({
+      jobId: job._id,
 
-    for (const step of steps) {
-      const process = await Process.findById(step.processId);
+      processId: process._id,
 
-      jobSteps.push({
-        jobId: job._id,
-        processId: step.processId,
-        startTime: step.startTime,
-        endTime: step.endTime,
-        cycleTime: process.cycleTime,
-        quantity,
-        requiredManpower: process.manpower,
-        workers: [], // assigned later
-        machineId: null,
-      });
-    }
+      sequence: process.sequence,
 
-    await JobStep.insertMany(jobSteps);
+      cycleTime: process.cycleTime,
+
+      requiredManpower: process.manpower,
+
+      totalEstimatedTime: process.cycleTime * quantity,
+
+      status: "pending",
+    }));
+
+    await JobStep.insertMany(steps);
 
     return {
       success: true,
-      statustype: "OK",
       message: "Job created successfully",
+      data: job,
+    };
+  }
+
+  async getJobs(query) {
+    const page = Number(query.page) || 1;
+
+    const limit = Number(query.limit) || 10;
+
+    const skip = (page - 1) * limit;
+
+    const [jobs, total] = await Promise.all([
+      Job.find()
+        .populate("clientId")
+        .populate("productId")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+
+      Job.countDocuments(),
+    ]);
+
+    return {
+      success: true,
+
+      data: jobs,
+
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getJobById(id) {
+    const job = await Job.findById(id)
+      .populate("clientId")
+      .populate("productId");
+
+    const steps = await JobStep.find({
+      jobId: id,
+    })
+      .populate("processId")
+      .sort({ sequence: 1 });
+
+    return {
+      success: true,
+
       data: {
-        jobId: job._id,
+        job,
+        steps,
       },
     };
   }

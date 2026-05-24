@@ -39,7 +39,11 @@ class MachineService {
     }
 
     const [machines, total] = await Promise.all([
-      Machine.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Machine.find(filter)
+        .populate("requiredSkills", "name currentHourlyCost")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
 
       Machine.countDocuments(filter),
     ]);
@@ -56,7 +60,6 @@ class MachineService {
       },
     };
   }
-
   async updateMachine(id, data) {
     const machine = await Machine.findByIdAndUpdate(id, data, { new: true });
 

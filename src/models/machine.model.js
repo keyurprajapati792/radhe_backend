@@ -9,6 +9,12 @@ const machineSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  requiredSkills: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Skill",
+    },
+  ],
   locationId: {
     type: Number,
     trim: true,

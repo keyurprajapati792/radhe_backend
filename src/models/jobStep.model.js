@@ -4,39 +4,44 @@ const jobStepSchema = new mongoose.Schema({
   jobId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Job",
+    required: true,
   },
+
   processId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Process",
+    required: true,
   },
 
-  machineId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Machine",
+  sequence: {
+    type: Number,
+    required: true,
   },
 
-workers: [
-  {
-    workerId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Worker",
-      required: true,
-    },
-    effort: {
-      type: Number, // percentage
-      default: 100,
-    },
+  cycleTime: {
+    type: Number,
+    required: true,
   },
-],
 
+  requiredManpower: {
+    type: Number,
+    required: true,
+  },
 
+  totalEstimatedTime: {
+    type: Number,
+    required: true,
+  },
 
-  startTime: Date,
-  endTime: Date,
+  assignedMinutes: {
+    type: Number,
+    default: 0,
+  },
 
-  cycleTime: Number,
-  quantity: Number,
-  requiredManpower: Number,
+  completedMinutes: {
+    type: Number,
+    default: 0,
+  },
 
   status: {
     type: String,
@@ -45,6 +50,7 @@ workers: [
   },
 });
 
-const JobStep = mongoose.model("JobStep", jobStepSchema);
+const JobStep =
+  mongoose.models.JobStep || mongoose.model("JobStep", jobStepSchema);
 
 export default JobStep;

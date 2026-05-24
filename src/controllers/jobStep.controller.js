@@ -1,12 +1,18 @@
+import JobStepService from "../services/jobStep.service.js";
 
-import jobStepService from "../services/jobStep.service.js";
-import { Interceptor } from "../utils/interceptor.js";
+class JobStepController {
+  async getJobSteps(req, res) {
+    try {
+      const response = await JobStepService.getJobSteps(req.params.jobId);
 
-export const assignWorkers = async (req, res) => {
-  const { id } = req.params;
+      return res.status(200).json(response);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: err.message,
+      });
+    }
+  }
+}
 
-  return Interceptor.responseHandler(
-    () => jobStepService.assignWorkers(id, req.body),
-    res
-  );
-};
+export default new JobStepController();
