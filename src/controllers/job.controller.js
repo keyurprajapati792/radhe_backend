@@ -1,4 +1,4 @@
-import JobService from '../services/job.service.js';
+import JobService from "../services/job.service.js";
 
 class JobController {
   async createJob(req, res) {
@@ -30,6 +30,18 @@ class JobController {
   async getJobById(req, res) {
     try {
       const response = await JobService.getJobById(req.params.id);
+
+      return res.status(200).json(response);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: err.message,
+      });
+    }
+  }
+  async getJobPlanningData(req, res) {
+    try {
+      const response = await JobService.getJobPlanningData(req.params.id);
 
       return res.status(200).json(response);
     } catch (err) {

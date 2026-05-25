@@ -1,18 +1,17 @@
 import JobStep from "../models/jobStep.model.js";
-
-import Process from "../models/process.model.js";
-
 import Machine from "../models/machine.model.js";
-
 import Worker from "../models/worker.model.js";
-
 import ProductionSlot from "../models/productionSlot.model.js";
 
 class SchedulerService {
-  async getSuggestions(jobStepId) {
-    const jobStep = await JobStep.findById(jobStepId);
+  async getSuggestions(jobStepId, locationId) {
+    const jobStep = await JobStep.findById(jobStepId).populate("processId");
 
-    const process = await Process.findById(jobStep.processId);
+    if (!jobStep) {
+      throw new Error("Job step not found");
+    }
+
+    // ---------------- PREVIOUS STEP ----------------
 
     const previousStep = await JobStep.findOne({
       jobId: jobStep.jobId,
@@ -26,37 +25,86 @@ class SchedulerService {
         jobStepId: previousStep._id,
       }).sort({ endTime: -1 });
 
-      if (previousSlot) {
-        previousStepEnd = previousSlot.endTime;
+      if (previousSlot?.endTime) {
+        previousStepEnd = new Date(previousSlot.endTime);
       }
     }
 
+    // ---------------- FIND MACHINES ----------------
+
     const machines = await Machine.find({
-      name: process.requiredMachineType,
+      type: jobStep.processId.machineType,
       status: "available",
+      locationId,
+    }).sort({
+      availableFrom: 1,
     });
 
-    const machineIds = machines.map((m) => m._id);
+    // ---------------- PICK BEST MACHINE ----------------
 
-    const skills = machines.flatMap((m) => m.requiredSkills);
+    let selectedMachine = null;
 
-    const workers = await Worker.find({
-      skills: {
-        $in: skills,
-      },
+    let processStartTime = previousStepEnd;
 
-      status: "available",
-    });
+    for (const machine of machines) {
+      const machineAvailableFrom = machine.availableFrom
+        ? new Date(machine.availableFrom)
+        : new Date();
+
+      const machineStartTime =
+        machineAvailableFrom > previousStepEnd
+          ? machineAvailableFrom
+          : previousStepEnd;
+
+      if (!selectedMachine) {
+        selectedMachine = machine;
+
+        processStartTime = machineStartTime;
+
+        continue;
+      }
+
+      // choose earliest possible start
+      if (machineStartTime < processStartTime) {
+        selectedMachine = machine;
+
+        processStartTime = machineStartTime;
+      }
+    }
+
+    // ---------------- PROCESS END TIME ----------------
+
+    const overtimeMinutes = jobStep.overtimeMinutes || 0;
+
+    const totalMinutes = jobStep.totalEstimatedTime + overtimeMinutes;
+
+    const processEndTime = new Date(
+      processStartTime.getTime() + totalMinutes * 60 * 1000,
+    );
+
+    // ---------------- WORKERS ----------------
+
+    let workers = [];
+
+    if (selectedMachine?.requiredSkills?.length) {
+      workers = await Worker.find({
+        skills: {
+          $in: selectedMachine.requiredSkills,
+        },
+
+        status: "available",
+
+        locationId,
+      }).limit(jobStep.requiredManpower);
+    }
 
     return {
-      success: true,
-
-      data: {
-        process,
-        previousStepEnd,
-        machines,
-        workers,
-      },
+      process: jobStep.processId,
+      processStartTime,
+      processEndTime,
+      machine: selectedMachine,
+      workers,
+      requiredManpower: jobStep.requiredManpower,
     };
   }
 }

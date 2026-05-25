@@ -31,6 +31,10 @@ const processSchema = new mongoose.Schema({
     type: Number,
     trim: true,
   },
+  isActive: {
+    type: Boolean,
+    default: true,
+  },
 });
 
 const Process = mongoose.model("Process", processSchema);

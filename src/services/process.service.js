@@ -12,7 +12,9 @@ class ProcessService {
   }
 
   async getByProduct(productId) {
-    const processes = await Process.find({ productId }).sort({ sequence: 1 });
+    const processes = await Process.find({ productId, isActive: true }).sort({
+      sequence: 1,
+    });
 
     return {
       success: true,
@@ -38,6 +40,29 @@ class ProcessService {
       success: true,
       statustype: "OK",
       message: "Process updated successfully",
+      data: process,
+    };
+  }
+
+  async deleteProcess(id) {
+    const process = await Process.findByIdAndUpdate(
+      id,
+      { isActive: false },
+      { new: true },
+    );
+
+    if (!process) {
+      return {
+        success: false,
+        statustype: "NOT_FOUND",
+        message: "Process not found",
+      };
+    }
+
+    return {
+      success: true,
+      statustype: "OK",
+      message: "Process deleted successfully",
       data: process,
     };
   }

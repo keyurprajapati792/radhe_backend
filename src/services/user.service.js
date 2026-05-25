@@ -88,7 +88,7 @@ class UserService {
 
   // GET SINGLE USER
   async getUserById(id) {
-    const user = await User.findById(id);
+    const user = await User.findById(id).select("-password");
 
     if (!user) {
       return {

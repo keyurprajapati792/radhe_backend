@@ -11,15 +11,19 @@ const jobSchema = new mongoose.Schema({
     ref: "Product",
     required: true,
   },
+
   quantity: Number,
   status: {
     type: String,
     enum: ["planned", "in_progress", "completed"],
     default: "planned",
   },
+  locationId: {
+    type: Number,
+    required: true,
+  },
 });
 
-
-const Job = mongoose.model("JOb", jobSchema);
+const Job = mongoose.model("Job", jobSchema);
 
 export default Job;

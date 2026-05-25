@@ -35,7 +35,10 @@ class ProductService {
       };
     }
 
-    const processes = await Process.find({ productId: id }).sort({
+    const processes = await Process.find({
+      productId: id,
+      isActive: true,
+    }).sort({
       sequence: 1,
     });
 

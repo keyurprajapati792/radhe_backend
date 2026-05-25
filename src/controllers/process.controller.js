@@ -21,3 +21,10 @@ export const updateProcess = async (req, res) => {
     res,
   );
 };
+
+export const deleteProcess = async (req, res) => {
+  return Interceptor.responseHandler(
+    () => ProcessService.deleteProcess(req.params.id),
+    res,
+  );
+};
