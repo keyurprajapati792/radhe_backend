@@ -1,5 +1,5 @@
+import JobStep from "../models/jobStep.model.js";
 import ProductionSlot from "../models/productionSlot.model.js";
-import JobStep from "../models/JobStep.model.js";
 
 class ProductionSlotService {
   async createSlot(payload) {
