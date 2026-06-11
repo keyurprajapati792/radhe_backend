@@ -4,6 +4,7 @@ import {
   deleteWorker,
   getWorkerById,
   getWorkers,
+  getWorkerUtilizationReport,
   updateWorker,
 } from "../controllers/worker.controller.js";
 
@@ -14,5 +15,6 @@ router.get("/", getWorkers);
 router.get("/:id", getWorkerById);
 router.put("/:id", updateWorker);
 router.delete("/:id", deleteWorker);
+router.get("/report/utilization", getWorkerUtilizationReport);
 
 export default router;

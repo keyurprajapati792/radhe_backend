@@ -1,9 +1,9 @@
 import ProductionSlotService from "../services/productionSlot.service.js";
 
 class ProductionSlotController {
-  async createSlot(req, res) {
+  async createSlots(req, res) {
     try {
-      const response = await ProductionSlotService.createSlot(req.body);
+      const response = await ProductionSlotService.createSlots(req.body);
 
       return res.status(201).json(response);
     } catch (err) {

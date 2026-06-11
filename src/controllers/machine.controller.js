@@ -21,3 +21,10 @@ export const updateMachine = async (req, res) => {
     res,
   );
 };
+
+export const getMachineUtilizationReport = async (req, res) => {
+  return Interceptor.responseHandler(
+    () => MachineService.getMachineUtilizationReport(req.query),
+    res,
+  );
+};

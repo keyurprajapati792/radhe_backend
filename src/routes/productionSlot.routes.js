@@ -4,7 +4,7 @@ import ProductionSlotController from "../controllers/productionSlot.controller.j
 
 const router = express.Router();
 
-router.post("/", ProductionSlotController.createSlot);
+router.post("/", ProductionSlotController.createSlots);
 
 router.get("/:jobStepId", ProductionSlotController.getSlots);
 

@@ -20,7 +20,8 @@ import productionSlotRoutes from "./routes/productionSlot.routes.js";
 import schedulerRoutes from "./routes/scheduler.routes.js";
 import workConfigRoutes from "./routes/workConfig.routes.js";
 import holidayRoutes from "./routes/holday.routes.js";
-import SkillsRoutes from "./routes/skill.routes.js";
+import skillsRoutes from "./routes/skill.routes.js";
+import dashboardRoutes from "./routes/dashboard.routes.js";
 
 dotenv.config();
 connectDB();
@@ -59,8 +60,9 @@ app.use("/v1/job-step", jobStepRoutes);
 app.use("/v1/production-slot", productionSlotRoutes);
 app.use("/v1/work-config", workConfigRoutes);
 app.use("/v1/holiday", holidayRoutes);
-app.use("/v1/skills", SkillsRoutes);
+app.use("/v1/skills", skillsRoutes);
 app.use("/v1/scheduler", schedulerRoutes);
+app.use("/v1/dashboard", dashboardRoutes);
 
 app.get("/", (req, res) => {
   res.send("API Running");

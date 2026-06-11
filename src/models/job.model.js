@@ -11,8 +11,15 @@ const jobSchema = new mongoose.Schema({
     ref: "Product",
     required: true,
   },
-
   quantity: Number,
+  orderDate: {
+    type: Date,
+    required: true,
+  },
+  // startDate: {
+  //   type: Date,
+  //   // required: true,
+  // },
   status: {
     type: String,
     enum: ["planned", "in_progress", "completed"],

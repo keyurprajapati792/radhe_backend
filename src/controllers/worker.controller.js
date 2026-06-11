@@ -33,3 +33,9 @@ export const deleteWorker = async (req, res) => {
     res,
   );
 };
+export const getWorkerUtilizationReport = async (req, res) => {
+  return Interceptor.responseHandler(
+    () => WorkerService.getWorkerUtilizationReport(req.query),
+    res,
+  );
+};

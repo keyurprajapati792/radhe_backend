@@ -2,13 +2,33 @@ import JobStep from "../models/jobStep.model.js";
 import ProductionSlot from "../models/productionSlot.model.js";
 
 class ProductionSlotService {
-  async createSlot(payload) {
-    const slot = await ProductionSlot.create(payload);
+  async createSlots(payload) {
+    const { slots } = payload;
+
+    const createdSlots = [];
+
+    for (const slotPayload of slots) {
+      // remove old slot if replanning
+      await ProductionSlot.deleteMany({
+        jobStepId: slotPayload.jobStepId,
+      });
+
+      const slot = await ProductionSlot.create(slotPayload);
+
+      const slotMinutes =
+        (new Date(slot.endTime) - new Date(slot.startTime)) / 1000 / 60;
+
+      await JobStep.findByIdAndUpdate(slot.jobStepId, {
+        assignedMinutes: slotMinutes,
+      });
+
+      createdSlots.push(slot);
+    }
 
     return {
       success: true,
-      message: "Slot created successfully",
-      data: slot,
+      message: "Planning saved successfully",
+      data: createdSlots,
     };
   }
 

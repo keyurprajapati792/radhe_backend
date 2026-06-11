@@ -6,31 +6,44 @@ const processSchema = new mongoose.Schema({
     ref: "Product",
     required: true,
   },
+
   name: {
     type: String,
     required: true,
   },
+
   requiredMachineType: {
     type: String,
     required: true,
   },
 
+  // NEW
+  machineIds: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Machine",
+    },
+  ],
+
   cycleTime: {
     type: Number,
     required: true,
   },
+
   manpower: {
     type: Number,
     required: true,
   },
+
   sequence: {
     type: Number,
     required: true,
   },
+
   locationId: {
     type: Number,
-    trim: true,
   },
+
   isActive: {
     type: Boolean,
     default: true,

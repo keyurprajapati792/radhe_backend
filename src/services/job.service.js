@@ -70,9 +70,22 @@ class JobService {
   }
 
   async getJobById(id) {
-    const job = await Job.findById(id)
+    const jobData = await Job.findById(id)
       .populate("clientId")
       .populate("productId");
+
+    if (!jobData) {
+      throw new Error("Job not found");
+    }
+
+    const job = {
+      ...jobData.toObject(),
+      client: jobData.clientId,
+      product: jobData.productId,
+    };
+
+    delete job.clientId;
+    delete job.productId;
 
     const steps = await JobStep.find({
       jobId: id,
@@ -80,15 +93,74 @@ class JobService {
       .populate("processId")
       .sort({ sequence: 1 });
 
-    const formattedJob = job.toObject();
-    formattedJob.client = formattedJob.clientId;
-    formattedJob.product = formattedJob.productId;
-    delete formattedJob.clientId;
-    delete formattedJob.productId;
-    formattedJob.steps = steps;
+    const slots = await ProductionSlot.find({
+      jobId: id,
+    })
+      .populate("machineId")
+      .populate("workers.workerId")
+      .sort({ startTime: 1 });
+
+    const formattedSteps = steps.map((step) => {
+      const stepSlots = slots
+        .filter((slot) => slot.jobStepId.toString() === step._id.toString())
+        .map((slot) => {
+          const formattedSlot = {
+            ...slot.toObject(),
+            machine: slot.machineId,
+            workers: slot.workers.map((worker) => ({
+              ...worker.toObject(),
+              worker: worker.workerId,
+            })),
+          };
+
+          delete formattedSlot.machineId;
+          formattedSlot.workers = formattedSlot.workers.map((worker) => {
+            delete worker.workerId;
+
+            return worker;
+          });
+
+          return formattedSlot;
+        });
+
+      const formattedStep = {
+        ...step.toObject(),
+        process: step.processId,
+        slots: stepSlots,
+      };
+
+      delete formattedStep.processId;
+
+      return formattedStep;
+    });
+
+    const totalMinutes = steps.reduce(
+      (acc, step) => acc + step.totalEstimatedTime,
+      0,
+    );
+
+    const completedMinutes = steps.reduce(
+      (acc, step) => acc + (step.completedMinutes || 0),
+      0,
+    );
+
+    const progress =
+      totalMinutes > 0
+        ? Math.round((completedMinutes / totalMinutes) * 100)
+        : 0;
+
     return {
       success: true,
-      data: formattedJob,
+      data: {
+        job,
+        steps: formattedSteps,
+        stats: {
+          totalSteps: steps.length,
+          totalMinutes,
+          completedMinutes,
+          progress,
+        },
+      },
     };
   }
 
@@ -99,19 +171,23 @@ class JobService {
 
     const steps = await JobStep.find({ jobId }).sort({ sequence: 1 });
 
-    const enrichedSteps = await Promise.all(
-      steps.map(async (step) => {
-        const suggestions = await SchedulerService.getSuggestions(
-          step._id,
-          job.locationId,
-        );
+    const enrichedSteps = [];
 
-        return {
-          ...step.toObject(),
-          suggestions,
-        };
-      }),
-    );
+    for (const step of steps) {
+      const suggestions = await SchedulerService.getSuggestions(
+        step._id,
+        job.locationId,
+      );
+
+      enrichedSteps.push({
+        ...step.toObject(),
+        suggestions,
+
+        // keep response synced with latest schedule
+        plannedStartTime: suggestions.processStartTime,
+        plannedEndTime: suggestions.processEndTime,
+      });
+    }
 
     const formattedJob = {
       ...job.toObject(),
