@@ -6,13 +6,15 @@ class UserService {
     const { firstname, middlename, lastname, email, phone, locationId, role } =
       data;
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return {
-        success: false,
-        statustype: "CONFLICT",
-        message: `${role} already exists`,
-      };
+    if (email !== "") {
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return {
+          success: false,
+          statustype: "CONFLICT",
+          message: `${role} already exists`,
+        };
+      }
     }
 
     let password = null;

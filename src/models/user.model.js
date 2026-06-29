@@ -6,11 +6,10 @@ const userSchema = new mongoose.Schema(
     email: {
       type: String,
       trim: true,
-      unique: true,
       lowercase: true,
-      required: function () {
-        return this.role !== "client";
-      },
+      unique: true,
+      sparse: true,
+      required: true,
     },
 
     locationId: {
@@ -20,7 +19,6 @@ const userSchema = new mongoose.Schema(
 
     firstname: {
       type: String,
-      required: true,
       trim: true,
     },
 
@@ -31,19 +29,18 @@ const userSchema = new mongoose.Schema(
 
     lastname: {
       type: String,
-      required: true,
       trim: true,
     },
 
     phone: {
       type: String,
-      required: true,
       trim: true,
+      unique: true,
     },
 
     role: {
       type: String,
-      enum: ["admin", "employee", "client"],
+      enum: ["admin", "employee"],
       default: "client",
     },
     locationId: {
@@ -53,9 +50,7 @@ const userSchema = new mongoose.Schema(
 
     password: {
       type: String,
-      required: function () {
-        return this.role !== "client";
-      },
+      required: true,
     },
   },
   { timestamps: true },

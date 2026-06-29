@@ -44,19 +44,35 @@ class SkillService {
     };
   }
 
-  async getAll() {
-    const skills = await Skill.find({
+  async getAll(query = {}) {
+    const page = parseInt(query.page) || 1;
+    const limit = parseInt(query.limit) || 10;
+
+    const skip = (page - 1) * limit;
+
+    const filter = {
       isActive: true,
-    }).sort({ name: 1 });
+    };
+
+    const [skills, total] = await Promise.all([
+      Skill.find(filter).sort({ name: 1 }).skip(skip).limit(limit),
+
+      Skill.countDocuments(filter),
+    ]);
 
     return {
       success: true,
       statustype: "OK",
       message: "Skills fetched successfully",
       data: skills,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
     };
   }
-
   async getById(skillId) {
     const skill = await Skill.findById(skillId);
 

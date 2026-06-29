@@ -7,15 +7,11 @@ import WorkConfig from "../models/workConfig.model.js";
 import Holiday from "../models/holiday.model.js";
 
 class SchedulerService {
-  // =========================================================
-  // HELPERS
-  // =========================================================
-
+  // Helpers
   getDayTime(date, timeStr) {
     const [h, m] = timeStr.split(":").map(Number);
 
     const d = new Date(date);
-
     d.setHours(h, m, 0, 0);
 
     return d;
@@ -32,7 +28,7 @@ class SchedulerService {
 
     let end = this.getDayTime(date, config.workingHours.end);
 
-    if (config.overtime?.enabled && config.overtime?.end) {
+    if (config.overtime?.enabled) {
       end = this.getDayTime(date, config.overtime.end);
     }
 
@@ -42,7 +38,6 @@ class SchedulerService {
   isBreakTime(date, breaks) {
     return breaks.some((b) => {
       const start = this.getDayTime(date, b.start);
-
       const end = this.getDayTime(date, b.end);
 
       return date >= start && date < end;
@@ -52,7 +47,6 @@ class SchedulerService {
   moveToBreakEnd(date, breaks) {
     for (const b of breaks) {
       const start = this.getDayTime(date, b.start);
-
       const end = this.getDayTime(date, b.end);
 
       if (date >= start && date < end) {
@@ -77,7 +71,6 @@ class SchedulerService {
     while (true) {
       if (this.isHoliday(current, holidays)) {
         current = this.moveToNextWorkingStart(current, config);
-
         continue;
       }
 
@@ -95,7 +88,6 @@ class SchedulerService {
 
       if (this.isBreakTime(current, config.breaks)) {
         current = this.moveToBreakEnd(current, config.breaks);
-
         continue;
       }
 
@@ -105,64 +97,53 @@ class SchedulerService {
     return current;
   }
 
-  // =========================================================
-  // CONVERT PROCESS TIME
-  // =========================================================
-
-  /**
-   * cycleTime is stored in SECONDS
-   * quantity * cycleTime => total seconds
-   * convert seconds to minutes
-   */
-  calculateEstimatedSeconds(cycleTimeSeconds, quantity) {
-    return cycleTimeSeconds * quantity;
+  //Time Engine
+  calculateDuration(process, quantity) {
+    return process.cycleTime * quantity;
   }
-  // =========================================================
-  // FAST WORKING SECONDS ENGINE
-  // =========================================================
 
   addWorkingSeconds(startTime, seconds, config, holidays) {
     let current = new Date(startTime);
+
     let remaining = seconds;
 
     while (remaining > 0) {
       current = this.normalizeWorkingTime(current, config, holidays);
 
-      const dayEnd =
-        config.overtime?.enabled && config.overtime?.end
-          ? this.getDayTime(current, config.overtime.end)
-          : this.getDayTime(current, config.workingHours.end);
+      const dayEnd = config.overtime?.enabled
+        ? this.getDayTime(current, config.overtime.end)
+        : this.getDayTime(current, config.workingHours.end);
 
-      let nextBreakStart = null;
+      let nextBreak = null;
 
       for (const b of config.breaks || []) {
         const breakStart = this.getDayTime(current, b.start);
 
         if (breakStart > current) {
-          if (!nextBreakStart || breakStart < nextBreakStart) {
-            nextBreakStart = breakStart;
+          if (!nextBreak || breakStart < nextBreak) {
+            nextBreak = breakStart;
           }
         }
       }
 
       let segmentEnd = dayEnd;
 
-      if (nextBreakStart && nextBreakStart < segmentEnd) {
-        segmentEnd = nextBreakStart;
+      if (nextBreak && nextBreak < segmentEnd) {
+        segmentEnd = nextBreak;
       }
 
-      const availableSeconds = Math.floor((segmentEnd - current) / 1000);
+      const available = Math.floor((segmentEnd - current) / 1000);
 
-      if (availableSeconds <= 0) {
+      if (available <= 0) {
         current = new Date(segmentEnd.getTime() + 1000);
         continue;
       }
 
-      if (remaining <= availableSeconds) {
+      if (remaining <= available) {
         return new Date(current.getTime() + remaining * 1000);
       }
 
-      remaining -= availableSeconds;
+      remaining -= available;
 
       current = new Date(segmentEnd.getTime() + 1000);
     }
@@ -170,38 +151,56 @@ class SchedulerService {
     return current;
   }
 
-  // =========================================================
-  // MACHINE CONFLICTS
-  // =========================================================
-
-  async hasMachineConflict(machineId, startTime, endTime) {
-    return ProductionSlot.findOne({
+  async hasMachineConflict(
+    machineId,
+    startTime,
+    endTime,
+    reservedMachines = [],
+  ) {
+    const dbConflict = await ProductionSlot.findOne({
       machineId,
+      plannedStartTime: { $lt: endTime },
+      plannedEndTime: { $gt: startTime },
+    }).sort({
+      plannedEndTime: 1,
+    });
 
-      startTime: {
-        $lt: endTime,
-      },
+    if (dbConflict) {
+      return dbConflict;
+    }
 
-      endTime: {
-        $gt: startTime,
-      },
-    }).sort({ endTime: 1 });
+    const memoryConflict = reservedMachines.find(
+      (m) =>
+        m.machineId.toString() === machineId.toString() &&
+        m.startTime < endTime &&
+        m.endTime > startTime,
+    );
+
+    if (memoryConflict) {
+      return {
+        plannedEndTime: memoryConflict.endTime,
+      };
+    }
+
+    return null;
   }
 
-  async getMachineAvailableSlot(
+  //Find the first free slot on a machine
+  async findMachineSlot(
     machineId,
     desiredStart,
     durationSeconds,
     config,
     holidays,
+    reservedMachines = [],
   ) {
-    let currentStart = new Date(desiredStart);
+    let start = new Date(desiredStart);
 
     while (true) {
-      currentStart = this.normalizeWorkingTime(currentStart, config, holidays);
+      start = this.normalizeWorkingTime(start, config, holidays);
 
-      const calculatedEnd = this.addWorkingSeconds(
-        currentStart,
+      const end = this.addWorkingSeconds(
+        start,
         durationSeconds,
         config,
         holidays,
@@ -209,24 +208,90 @@ class SchedulerService {
 
       const conflict = await this.hasMachineConflict(
         machineId,
-        currentStart,
-        calculatedEnd,
+        start,
+        end,
+        reservedMachines,
       );
 
       if (!conflict) {
         return {
-          processStartTime: currentStart,
-          processEndTime: calculatedEnd,
+          startTime: start,
+          endTime: end,
         };
       }
 
-      currentStart = new Date(conflict.endTime.getTime() + 1000);
+      // Machine busy.
+      // Try again immediately after it becomes free.
+      start = new Date(conflict.plannedEndTime.getTime() + 1000);
     }
   }
 
-  // =========================================================
-  // WORKERS
-  // =========================================================
+  //Find the best machine
+  async findBestMachine(
+    process,
+    desiredStart,
+    durationSeconds,
+    locationId,
+    config,
+    holidays,
+    reservedMachines = [],
+  ) {
+    const machines = await Machine.find({
+      name: process.requiredMachineType,
+      status: "available",
+      locationId,
+    });
+
+    if (!machines.length) {
+      return null;
+    }
+
+    let best = null;
+
+    for (const machine of machines) {
+      const slot = await this.findMachineSlot(
+        machine._id,
+        desiredStart,
+        durationSeconds,
+        config,
+        holidays,
+        reservedMachines,
+      );
+
+      if (!best || slot.startTime < best.startTime) {
+        best = {
+          machine,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+        };
+      }
+    }
+
+    return best;
+  }
+
+  //Worker Conflict
+
+  async hasWorkerConflict(workerId, startTime, endTime, reservedWorkers = []) {
+    const dbConflict = await ProductionSlot.findOne({
+      "workers.workerId": workerId,
+      plannedStartTime: { $lt: endTime },
+      plannedEndTime: { $gt: startTime },
+    });
+
+    if (dbConflict) {
+      return true;
+    }
+
+    return reservedWorkers.some(
+      (w) =>
+        w.workerId.toString() === workerId.toString() &&
+        w.startTime < endTime &&
+        w.endTime > startTime,
+    );
+  }
+
+  //Get Available Workers
 
   async getAvailableWorkers(
     machine,
@@ -234,196 +299,174 @@ class SchedulerService {
     endTime,
     requiredManpower,
     locationId,
+    reservedWorkers = [],
   ) {
     if (!machine?.requiredSkills?.length) {
       return [];
     }
 
+    // normalize to strings — workers store skills as strings, machine has ObjectIds
+    const skillIds = machine.requiredSkills.map((s) => s.toString());
+
     const workers = await Worker.find({
-      skills: {
-        $in: machine.requiredSkills,
-      },
-
-      status: "available",
-
       locationId,
+      status: "available",
     });
 
-    const availableWorkers = [];
+    const skillMatched = workers.filter((w) =>
+      w.skills?.some((s) => skillIds.includes(s.toString())),
+    );
 
-    for (const worker of workers) {
-      const conflict = await ProductionSlot.findOne({
-        "workers.workerId": worker._id,
+    const available = [];
 
-        startTime: {
-          $lt: endTime,
-        },
-
-        endTime: {
-          $gt: startTime,
-        },
-      });
-
+    for (const worker of skillMatched) {
+      const conflict = await this.hasWorkerConflict(
+        worker._id,
+        startTime,
+        endTime,
+        reservedWorkers,
+      );
       if (!conflict) {
-        availableWorkers.push(worker);
+        available.push(worker);
       }
-
-      if (availableWorkers.length >= requiredManpower) {
+      if (available.length >= requiredManpower) {
         break;
       }
     }
 
-    return availableWorkers;
+    return available;
+  }
+  //Reserve Workers
+  createWorkerAssignments(workers) {
+    return workers.map((worker) => ({
+      workerId: worker._id,
+      effort: 100,
+    }));
   }
 
-  // =========================================================
-  // MAIN
-  // =========================================================
+  async scheduleJob(jobId, locationId) {
+    const job = await Job.findById(jobId);
+    if (!job) throw new Error("Job not found");
 
-  async getSuggestions(jobStepId, locationId) {
-    const jobStep = await JobStep.findById(jobStepId).populate("processId");
+    const steps = await JobStep.find({ jobId })
+      .populate("processId")
+      .sort({ sequence: 1 });
+    if (!steps.length) throw new Error("No job steps found");
 
-    if (!jobStep) {
-      throw new Error("Job step not found");
-    }
+    const config = await WorkConfig.findOne({ locationId });
+    if (!config) throw new Error("Work configuration not found");
 
-    const job = await Job.findById(jobStep.jobId);
+    const holidays = await Holiday.find({ locationId });
 
-    if (!job) {
-      throw new Error("Job not found");
-    }
+    // Earliest we could possibly start: later of (right now)
 
-    // =====================================================
-    // CONFIG
-    // =====================================================
+    const baseStart = this.normalizeWorkingTime(new Date(), config, holidays);
 
-    const config = await WorkConfig.findOne({
-      locationId,
-    });
+    const schedule = [];
+    const reservedMachines = [];
+    const reservedWorkers = [];
 
-    if (!config) {
-      throw new Error("Work config not found");
-    }
+    let prevStepStart = null;
+    let prevCycleTime = null;
 
-    const holidays = await Holiday.find({
-      locationId,
-    });
+    for (const step of steps) {
+      const cycleTimeSec = step.processId.cycleTime;
 
-    // =====================================================
-    // CALCULATE ACTUAL TIME
-    // =====================================================
+      const desiredStart =
+        prevStepStart === null
+          ? baseStart
+          : this.addWorkingSeconds(
+              prevStepStart,
+              prevCycleTime,
+              config,
+              holidays,
+            );
 
-    const estimatedSeconds = this.calculateEstimatedSeconds(
-      jobStep.processId.cycleTime,
-      job.quantity,
-    );
+      const effectiveCycleTime =
+        prevCycleTime === null
+          ? cycleTimeSec
+          : Math.max(cycleTimeSec, prevCycleTime);
 
-    // update latest estimate
-    await JobStep.findByIdAndUpdate(jobStep._id, {
-      totalEstimatedTime: estimatedSeconds,
-    });
+      const durationSec =
+        (job.quantity - 1) * effectiveCycleTime + cycleTimeSec;
 
-    // =====================================================
-    // PREVIOUS STEP END
-    // =====================================================
-
-    let previousStepEnd = this.normalizeWorkingTime(
-      new Date(),
-      config,
-      holidays,
-    );
-
-    if (jobStep.sequence > 1) {
-      const previousStep = await JobStep.findOne({
-        jobId: jobStep.jobId,
-        sequence: jobStep.sequence - 1,
-      });
-
-      if (previousStep?.plannedEndTime) {
-        previousStepEnd = new Date(previousStep.plannedEndTime);
-      }
-    }
-
-    // =====================================================
-    // FIND MACHINES
-    // =====================================================
-
-    const machines = await Machine.find({
-      _id: {
-        $in: jobStep.processId.machineIds || [],
-      },
-    });
-
-    if (!machines.length) {
-      return {
-        process: jobStep.processId,
-        machine: null,
-        workers: [],
-        processStartTime: null,
-        processEndTime: null,
-        requiredManpower: jobStep.requiredManpower,
-      };
-    }
-
-    // =====================================================
-    // PICK BEST MACHINE
-    // =====================================================
-
-    let selectedMachine = null;
-
-    let selectedStart = null;
-
-    let selectedEnd = null;
-
-    for (const machine of machines) {
-      const slot = await this.getMachineAvailableSlot(
-        machine._id,
-        previousStepEnd,
-        estimatedSeconds,
+      const machineResult = await this.findBestMachine(
+        step.processId,
+        desiredStart,
+        durationSec,
+        locationId,
         config,
         holidays,
+        reservedMachines,
       );
 
-      if (!selectedStart || slot.processStartTime < selectedStart) {
-        selectedMachine = machine;
-
-        selectedStart = slot.processStartTime;
-
-        selectedEnd = slot.processEndTime;
+      if (!machineResult) {
+        throw new Error(`No machine available for: ${step.processId.name}`);
       }
+
+      const workers = await this.getAvailableWorkers(
+        machineResult.machine,
+        machineResult.startTime,
+        machineResult.endTime,
+        step.requiredManpower,
+        locationId,
+        reservedWorkers,
+      );
+
+      if (workers.length < step.requiredManpower) {
+        throw new Error(
+          `Not enough workers for: ${step.processId.name}. ` +
+            `Need ${step.requiredManpower}, found ${workers.length}`,
+        );
+      }
+
+      schedule.push({
+        jobStep: step,
+        machine: machineResult.machine,
+        workers,
+        plannedStartTime: machineResult.startTime,
+        plannedEndTime: machineResult.endTime,
+      });
+
+      reservedMachines.push({
+        machineId: machineResult.machine._id,
+        startTime: machineResult.startTime,
+        endTime: machineResult.endTime,
+      });
+
+      for (const worker of workers) {
+        reservedWorkers.push({
+          workerId: worker._id,
+          startTime: machineResult.startTime,
+          endTime: machineResult.endTime,
+        });
+      }
+
+      await ProductionSlot.findOneAndUpdate(
+        { jobStepId: step._id },
+        {
+          jobId: job._id,
+          jobStepId: step._id,
+          machineId: machineResult.machine._id,
+          workers: this.createWorkerAssignments(workers),
+          plannedStartTime: machineResult.startTime,
+          plannedEndTime: machineResult.endTime,
+          status: "pending",
+        },
+        { upsert: true, new: true },
+      );
+
+      await JobStep.findByIdAndUpdate(step._id, { status: "ready" });
+
+      // IMPORTANT: use actual scheduled start, not desiredStart
+      // If the machine was busy and got pushed forward, prevStepStart
+      // reflects where it actually landed — so step 2's desiredStart
+      // is correctly one cycle after step 1's real start
+      prevStepStart = machineResult.startTime;
+      prevCycleTime = cycleTimeSec;
     }
 
-    // =====================================================
-    // WORKERS
-    // =====================================================
-
-    const workers = await this.getAvailableWorkers(
-      selectedMachine,
-      selectedStart,
-      selectedEnd,
-      jobStep.requiredManpower,
-      locationId,
-    );
-
-    // =====================================================
-    // SAVE PLANNED TIMES
-    // =====================================================
-
-    await JobStep.findByIdAndUpdate(jobStep._id, {
-      plannedStartTime: selectedStart,
-      plannedEndTime: selectedEnd,
-      totalEstimatedTime: estimatedSeconds,
-    });
-
-    return {
-      process: jobStep.processId,
-      machine: selectedMachine,
-      workers,
-      processStartTime: selectedStart,
-      processEndTime: selectedEnd,
-      requiredManpower: jobStep.requiredManpower,
-      estimatedSeconds,
-    };
+    return schedule;
   }
 }
 

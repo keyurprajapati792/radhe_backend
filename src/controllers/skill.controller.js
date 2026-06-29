@@ -6,7 +6,7 @@ export const createSkill = async (req, res) => {
 };
 
 export const getAllSkills = async (req, res) => {
-  return Interceptor.responseHandler(() => SkillService.getAll(), res);
+  return Interceptor.responseHandler(() => SkillService.getAll(req.query), res);
 };
 
 export const getSkillById = async (req, res) => {

@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 const workerSchema = mongoose.Schema({
   firstName: {
     type: String,
-    required: true,
     trim: true,
   },
   middleName: {
@@ -12,7 +11,6 @@ const workerSchema = mongoose.Schema({
   },
   lastName: {
     type: String,
-    required: true,
     trim: true,
   },
   skills: [

@@ -1,8 +1,9 @@
 // services/dashboard.service.js
 
 import { User } from "../models/user.model.js";
-import Worker from "../models/worker.model.js";
 import Job from "../models/job.model.js";
+import { Client } from "../models/client.model.js";
+import Worker from "../models/worker.model.js";
 
 class DashboardService {
   async getDashboardStats(locationId) {
@@ -11,9 +12,8 @@ class DashboardService {
     }
 
     // CLIENTS
-    const clients = await User.countDocuments({
+    const clients = await Client.countDocuments({
       locationId,
-      role: "client",
     });
 
     // WORKERS

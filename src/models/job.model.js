@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const jobSchema = new mongoose.Schema({
   clientId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
+    ref: "Client",
     required: true,
   },
   productId: {
@@ -20,6 +20,12 @@ const jobSchema = new mongoose.Schema({
   //   type: Date,
   //   // required: true,
   // },
+  priority: {
+    type: Number,
+    default: 3,
+    min: 1,
+    max: 5,
+  },
   status: {
     type: String,
     enum: ["planned", "in_progress", "completed"],

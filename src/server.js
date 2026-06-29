@@ -8,6 +8,7 @@ import cors from "cors";
 import { connectDB } from "./config/db.js";
 import authRoutes from "./routes/auth.routes.js";
 import userRoutes from "./routes/user.routes.js";
+import clientRoutes from "./routes/client.routes.js";
 import locationRoutes from "./routes/location.routes.js";
 import workerRoutes from "./routes/worker.routes.js";
 import machineRoutes from "./routes/machine.routes.js";
@@ -49,6 +50,7 @@ app.use(express.json());
 
 app.use("/v1/auth", authRoutes);
 app.use("/v1/user", userRoutes);
+app.use("/v1/client", clientRoutes);
 app.use("/v1/location", locationRoutes);
 app.use("/v1/worker", workerRoutes);
 app.use("/v1/machine", machineRoutes);

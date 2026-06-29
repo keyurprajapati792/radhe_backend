@@ -42,7 +42,10 @@ class JobService {
       Job.find()
         .populate("clientId")
         .populate("productId")
-        .sort({ createdAt: -1 })
+        .sort({
+          priority: 1,
+          createdAt: 1,
+        })
         .skip(skip)
         .limit(limit),
 
@@ -169,23 +172,30 @@ class JobService {
       .populate("clientId")
       .populate("productId");
 
-    const steps = await JobStep.find({ jobId }).sort({ sequence: 1 });
+    if (!job) {
+      throw new Error("Job not found");
+    }
+
+    // Schedule the complete job once
+    await SchedulerService.scheduleJob(job._id, job.locationId);
+
+    // Reload steps after scheduling
+    const steps = await JobStep.find({ jobId })
+      .populate("processId")
+      .sort({ sequence: 1 });
 
     const enrichedSteps = [];
 
     for (const step of steps) {
-      const suggestions = await SchedulerService.getSuggestions(
-        step._id,
-        job.locationId,
-      );
+      const slot = await ProductionSlot.findOne({
+        jobStepId: step._id,
+      })
+        .populate("machineId")
+        .populate("workers.workerId");
 
       enrichedSteps.push({
         ...step.toObject(),
-        suggestions,
-
-        // keep response synced with latest schedule
-        plannedStartTime: suggestions.processStartTime,
-        plannedEndTime: suggestions.processEndTime,
+        schedule: slot,
       });
     }
 

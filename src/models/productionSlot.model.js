@@ -26,7 +26,6 @@ const productionSlotSchema = new mongoose.Schema(
           type: mongoose.Schema.Types.ObjectId,
           ref: "Worker",
         },
-
         effort: {
           type: Number,
           default: 100,
@@ -34,26 +33,19 @@ const productionSlotSchema = new mongoose.Schema(
       },
     ],
 
-    // Planned Schedule
-    startTime: {
+    plannedStartTime: {
       type: Date,
       required: true,
     },
 
-    endTime: {
+    plannedEndTime: {
       type: Date,
       required: true,
     },
 
-    // Actual Machine Usage
-    actualStartTime: {
-      type: Date,
-      default: null,
-    },
-
-    actualEndTime: {
-      type: Date,
-      default: null,
+    setupMinutes: {
+      type: Number,
+      default: 0,
     },
 
     isOvertime: {
@@ -66,17 +58,51 @@ const productionSlotSchema = new mongoose.Schema(
       default: 0,
     },
 
+    actualStartTime: {
+      type: Date,
+      default: null,
+    },
+
+    actualEndTime: {
+      type: Date,
+      default: null,
+    },
+
     status: {
       type: String,
-      enum: ["pending", "running", "completed"],
+      enum: ["pending", "running", "completed", "hold"],
       default: "pending",
     },
+
+    producedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    rejectQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    reworkQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    approvedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true },
 );
 
-const ProductionSlot = mongoose.model("ProductionSlot", productionSlotSchema);
+const ProductionSlot =
+  mongoose.models.ProductionSlot ||
+  mongoose.model("ProductionSlot", productionSlotSchema);
 
 export default ProductionSlot;
