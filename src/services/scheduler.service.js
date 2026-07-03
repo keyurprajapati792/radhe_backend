@@ -360,7 +360,16 @@ class SchedulerService {
 
     // Earliest we could possibly start: later of (right now)
 
-    const baseStart = this.normalizeWorkingTime(new Date(), config, holidays);
+    const now = new Date();
+
+    const baseStart = this.normalizeWorkingTime(now, config, holidays);
+
+    console.log({
+      now,
+      baseStart,
+      workStart: config.workingHours.start,
+      workEnd: config.workingHours.end,
+    });
 
     const schedule = [];
     const reservedMachines = [];
