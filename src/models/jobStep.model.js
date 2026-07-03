@@ -31,8 +31,8 @@ const jobStepSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "ready", "running", "completed"],
-      default: "pending",
+      enum: ["planned", "pending", "running", "hold", "completed"],
+      default: "planned",
     },
   },
   { timestamps: true },

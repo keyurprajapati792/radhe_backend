@@ -1,6 +1,6 @@
 import Worker from "../models/worker.model.js";
 import ProductionSlot from "../models/productionSlot.model.js";
-import { calculateAvailableMinutes } from "../utils/utils.js";
+import { calculateAvailableMinutes, getAffectedJobs } from "../utils/utils.js";
 
 class WorkerService {
   async createWorker(data) {
@@ -29,7 +29,8 @@ class WorkerService {
       filter.locationId = Number(locationId);
     }
 
-    if (status) {
+    // Persisted statuses only
+    if (status && status !== "occupied") {
       filter.status = status;
     }
 
@@ -41,7 +42,28 @@ class WorkerService {
       ];
     }
 
-    const [users, total] = await Promise.all([
+    let occupiedWorkerIds = [];
+
+    // If requesting occupied workers, first determine who is occupied
+    if (status === "occupied") {
+      const runningSlots = await ProductionSlot.find({
+        status: "running",
+      })
+        .select("workers")
+        .lean();
+
+      occupiedWorkerIds = [
+        ...new Set(
+          runningSlots.flatMap((slot) =>
+            slot.workers.map((worker) => worker.workerId.toString()),
+          ),
+        ),
+      ];
+
+      filter._id = { $in: occupiedWorkerIds };
+    }
+
+    const [workers, total] = await Promise.all([
       Worker.find(filter)
         .populate("skills", "name currentHourlyCost")
         .select("-password")
@@ -52,10 +74,45 @@ class WorkerService {
       Worker.countDocuments(filter),
     ]);
 
+    // Only required when we're NOT already filtering by occupied
+    if (status !== "occupied") {
+      const workerIds = workers.map((worker) => worker._id);
+
+      const runningSlots = await ProductionSlot.find({
+        status: "running",
+        "workers.workerId": { $in: workerIds },
+      })
+        .select("workers")
+        .lean();
+
+      occupiedWorkerIds = [
+        ...new Set(
+          runningSlots.flatMap((slot) =>
+            slot.workers.map((worker) => worker.workerId.toString()),
+          ),
+        ),
+      ];
+    }
+
+    const occupiedSet = new Set(occupiedWorkerIds);
+
+    const formattedWorkers = workers.map((worker) => {
+      const data = worker.toObject();
+
+      if (
+        data.status === "available" &&
+        occupiedSet.has(worker._id.toString())
+      ) {
+        data.status = "occupied";
+      }
+
+      return data;
+    });
+
     return {
       success: true,
       statustype: "OK",
-      data: users,
+      data: formattedWorkers,
       meta: {
         total,
         page,
@@ -91,6 +148,35 @@ class WorkerService {
       statustype: "OK",
       message: "Worker updated",
       data: worker,
+    };
+  }
+
+  async updateWorkerStatus(id, status) {
+    const worker = await Worker.findById(id);
+
+    if (!worker) {
+      throw new Error("Worker not found");
+    }
+
+    worker.status = status;
+    await worker.save();
+
+    let affectedData;
+    if (status === "terminated" || status === "leave") {
+      affectedData = await getAffectedJobs({
+        "workers.workerId": worker._id,
+      });
+    }
+
+    return {
+      success: true,
+      statustype: "OK",
+      message: "Worker status updated successfully.",
+      data: {
+        worker,
+        affectedJobs: affectedData?.affectedJobs || [],
+        summary: affectedData?.summary || null,
+      },
     };
   }
 

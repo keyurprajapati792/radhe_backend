@@ -70,7 +70,7 @@ const productionSlotSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "running", "completed", "hold"],
+      enum: ["pending", "running", "hold", "completed"],
       default: "pending",
     },
 

@@ -3,6 +3,7 @@ import Process from "../models/process.model.js";
 import JobStep from "../models/jobStep.model.js";
 import ProductionSlot from "../models/productionSlot.model.js";
 import SchedulerService from "./scheduler.service.js";
+import mongoose from "mongoose";
 
 class JobService {
   async createJob(payload) {
@@ -99,29 +100,74 @@ class JobService {
     const slots = await ProductionSlot.find({
       jobId: id,
     })
-      .populate("machineId")
-      .populate("workers.workerId")
-      .sort({ startTime: 1 });
+      .populate({
+        path: "machineId",
+        select: "name machineNumber status requiredSkills",
+      })
+      .populate({
+        path: "workers.workerId",
+        select: "firstName lastName status skills",
+      })
+      .sort({ plannedStartTime: 1 });
+
+    const affectedSlots = [];
 
     const formattedSteps = steps.map((step) => {
       const stepSlots = slots
         .filter((slot) => slot.jobStepId.toString() === step._id.toString())
         .map((slot) => {
+          const issues = [];
+
+          // Machine Issues
+          if (slot.machineId?.status === "maintenance") {
+            issues.push({
+              type: "machine",
+              reason: "maintenance",
+            });
+          }
+
+          // Worker Issues
+          slot.workers.forEach((worker) => {
+            if (
+              worker.workerId?.status === "leave" ||
+              worker.workerId?.status === "terminated"
+            ) {
+              issues.push({
+                type: "worker",
+                workerId: worker.workerId?._id,
+                workerName: `${worker.workerId?.firstName} ${worker.workerId?.lastName}`,
+                reason: worker.workerId?.status,
+              });
+            }
+          });
+
+          const affected = issues.length > 0;
+
           const formattedSlot = {
             ...slot.toObject(),
+
             machine: slot.machineId,
+
             workers: slot.workers.map((worker) => ({
-              ...worker.toObject(),
+              effort: worker.effort,
               worker: worker.workerId,
             })),
+
+            affected,
+            issues,
           };
 
           delete formattedSlot.machineId;
-          formattedSlot.workers = formattedSlot.workers.map((worker) => {
-            delete worker.workerId;
 
-            return worker;
-          });
+          if (affected) {
+            affectedSlots.push({
+              slotId: slot._id,
+              stepId: step._id,
+              process: step.processId?.name,
+              machine: slot.machineId?.name,
+              issues,
+            });
+          }
 
           return formattedSlot;
         });
@@ -157,14 +203,65 @@ class JobService {
       data: {
         job,
         steps: formattedSteps,
+
         stats: {
           totalSteps: steps.length,
           totalMinutes,
           completedMinutes,
           progress,
         },
+
+        affected: {
+          hasIssues: affectedSlots.length > 0,
+          count: affectedSlots.length,
+          slots: affectedSlots,
+        },
       },
     };
+  }
+
+  async updateJobStatus(jobId, status) {
+    const session = await mongoose.startSession();
+
+    try {
+      session.startTransaction();
+
+      const job = await Job.findById(jobId).session(session);
+
+      if (!job) {
+        throw new Error("Job not found");
+      }
+
+      const allowedStatuses = ["planned", "running", "hold", "completed"];
+
+      if (!allowedStatuses.includes(status)) {
+        throw new Error("Invalid job status");
+      }
+
+      await Job.findByIdAndUpdate(jobId, { status }, { session });
+
+      await JobStep.updateMany({ jobId }, { status }, { session });
+
+      const slotStatus = status === "planned" ? "pending" : status;
+
+      await ProductionSlot.updateMany(
+        { jobId },
+        { status: slotStatus },
+        { session },
+      );
+
+      await session.commitTransaction();
+
+      return {
+        success: true,
+        message: "Job status updated successfully",
+      };
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
+    }
   }
 
   async getJobPlanningData(jobId) {

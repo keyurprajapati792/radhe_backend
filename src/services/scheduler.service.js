@@ -238,7 +238,7 @@ class SchedulerService {
   ) {
     const machines = await Machine.find({
       name: process.requiredMachineType,
-      status: "available",
+      status: { $nin: ["maintenance"] },
       locationId,
     });
 
@@ -310,7 +310,7 @@ class SchedulerService {
 
     const workers = await Worker.find({
       locationId,
-      status: "available",
+      status: { $nin: ["leave", "terminated"] },
     });
 
     const skillMatched = workers.filter((w) =>
@@ -456,7 +456,7 @@ class SchedulerService {
         { upsert: true, new: true },
       );
 
-      await JobStep.findByIdAndUpdate(step._id, { status: "ready" });
+      await JobStep.findByIdAndUpdate(step._id, { status: "pending" });
 
       // IMPORTANT: use actual scheduled start, not desiredStart
       // If the machine was busy and got pushed forward, prevStepStart

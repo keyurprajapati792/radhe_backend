@@ -21,6 +21,12 @@ export const updateMachine = async (req, res) => {
     res,
   );
 };
+export const updateMachineStatus = async (req, res) => {
+  return Interceptor.responseHandler(
+    () => MachineService.updateMachineStatus(req.params.id, req.body.status),
+    res,
+  );
+};
 
 export const getMachineUtilizationReport = async (req, res) => {
   return Interceptor.responseHandler(

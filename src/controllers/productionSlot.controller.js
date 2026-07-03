@@ -28,7 +28,47 @@ class ProductionSlotController {
       });
     }
   }
+  async getReplacementWorkers(req, res) {
+    try {
+      const response = await ProductionSlotService.getReplacementWorkers(
+        req.params.slotId,
+      );
 
+      return res.status(200).json(response);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: err.message,
+      });
+    }
+  }
+  async getReplacementMachines(req, res) {
+    try {
+      const response = await ProductionSlotService.getReplacementMachines(
+        req.params.slotId,
+      );
+
+      return res.status(200).json(response);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: err.message,
+      });
+    }
+  }
+
+  async updateSlots(req, res) {
+    try {
+      const response = await ProductionSlotService.updateSlots(req.body);
+
+      return res.status(200).json(response);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: err.message,
+      });
+    }
+  }
   async startSlot(req, res) {
     try {
       const response = await ProductionSlotService.startSlot(req.params.id);

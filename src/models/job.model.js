@@ -1,6 +1,10 @@
 import mongoose from "mongoose";
 
 const jobSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+  },
   clientId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Client",
@@ -16,6 +20,10 @@ const jobSchema = new mongoose.Schema({
     type: Date,
     required: true,
   },
+  ref_code: {
+    type: String,
+    required: true,
+  },
   // startDate: {
   //   type: Date,
   //   // required: true,
@@ -28,7 +36,7 @@ const jobSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ["planned", "in_progress", "completed"],
+    enum: ["planned", "running", "hold", "completed"],
     default: "planned",
   },
   locationId: {

@@ -39,6 +39,22 @@ class JobController {
       });
     }
   }
+
+  async updateJobStatus(req, res) {
+    try {
+      const response = await JobService.updateJobStatus(
+        req.params.id,
+        req.body.status,
+      );
+
+      return res.status(200).json(response);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: err.message,
+      });
+    }
+  }
   async getJobPlanningData(req, res) {
     try {
       const response = await JobService.getJobPlanningData(req.params.id);

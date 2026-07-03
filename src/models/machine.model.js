@@ -21,7 +21,7 @@ const machineSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ["available", "occupied", "maintenance"],
+    enum: ["available", "running", "maintenance"],
     default: "available",
   },
 });

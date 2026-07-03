@@ -21,7 +21,7 @@ const workerSchema = mongoose.Schema({
   ],
   status: {
     type: String,
-    enum: ["available", "leave", "terminated"],
+    enum: ["available", "occupied", "leave", "terminated"],
     default: "available",
   },
   phone: {

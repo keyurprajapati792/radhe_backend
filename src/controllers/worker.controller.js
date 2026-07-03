@@ -26,6 +26,12 @@ export const updateWorker = async (req, res) => {
     res,
   );
 };
+export const updateWorkerStatus = async (req, res) => {
+  return Interceptor.responseHandler(
+    () => WorkerService.updateWorkerStatus(req.params.id, req.body.status),
+    res,
+  );
+};
 
 export const deleteWorker = async (req, res) => {
   return Interceptor.responseHandler(
