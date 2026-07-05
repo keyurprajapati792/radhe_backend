@@ -155,34 +155,34 @@ class ProductionSlotService {
         existingSlot.status === "running" &&
         (machineChanged || workersChanged)
       ) {
-        // Close current slot
-        existingSlot.actualEndTime = new Date();
-        existingSlot.status = "completed";
+        const now = new Date();
+        const originalPlannedEndTime = existingSlot.plannedEndTime; // capture BEFORE mutating
 
+        // Close current slot — trim its planned window to when it actually stopped
+        existingSlot.actualEndTime = now;
+        existingSlot.plannedEndTime = now;
+        existingSlot.status = "completed";
         await existingSlot.save();
 
-        // Create continuation slot
+        // Continuation slot covers the remaining planned time
         const newSlot = await ProductionSlot.create({
           jobId: existingSlot.jobId,
           jobStepId: existingSlot.jobStepId,
 
           machineId: machineChanged ? data.machineId : existingSlot.machineId,
-
           workers: workersChanged ? data.workers : existingSlot.workers,
 
-          plannedStartTime: new Date(),
-
-          plannedEndTime: existingSlot.plannedEndTime,
+          plannedStartTime: now,
+          plannedEndTime: originalPlannedEndTime,
 
           setupMinutes: data.setupMinutes ?? 0,
 
           isOvertime: existingSlot.isOvertime,
           overtimeMinutes: existingSlot.overtimeMinutes,
 
-          actualStartTime: null,
+          actualStartTime: now, // production continues immediately, no gap
           actualEndTime: null,
-
-          status: "pending",
+          status: "running", // it's picking up live, not waiting to start
 
           producedQty: existingSlot.producedQty,
           rejectQty: existingSlot.rejectQty,
@@ -191,7 +191,6 @@ class ProductionSlotService {
         });
 
         updated.push(newSlot);
-
         continue;
       }
 

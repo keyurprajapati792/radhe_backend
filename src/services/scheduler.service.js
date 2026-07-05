@@ -6,26 +6,40 @@ import ProductionSlot from "../models/productionSlot.model.js";
 import WorkConfig from "../models/workConfig.model.js";
 import Holiday from "../models/holiday.model.js";
 
+import { DateTime } from "luxon";
+
+const APP_TIMEZONE = "Asia/Kolkata";
+
 class SchedulerService {
   // Helpers
   getDayTime(date, timeStr) {
     const [h, m] = timeStr.split(":").map(Number);
 
-    const d = new Date(date);
-    d.setHours(h, m, 0, 0);
+    const dt = DateTime.fromJSDate(date, { zone: APP_TIMEZONE }).set({
+      hour: h,
+      minute: m,
+      second: 0,
+      millisecond: 0,
+    });
 
-    return d;
+    return dt.toJSDate();
   }
 
   isHoliday(date, holidays) {
+    const dayKey = DateTime.fromJSDate(date, {
+      zone: APP_TIMEZONE,
+    }).toISODate();
+
     return holidays.some(
-      (h) => new Date(h.date).toDateString() === date.toDateString(),
+      (h) =>
+        DateTime.fromJSDate(new Date(h.date), {
+          zone: APP_TIMEZONE,
+        }).toISODate() === dayKey,
     );
   }
 
   isWithinWorkingHours(date, config) {
     const start = this.getDayTime(date, config.workingHours.start);
-
     let end = this.getDayTime(date, config.workingHours.end);
 
     if (config.overtime?.enabled) {
@@ -39,7 +53,6 @@ class SchedulerService {
     return breaks.some((b) => {
       const start = this.getDayTime(date, b.start);
       const end = this.getDayTime(date, b.end);
-
       return date >= start && date < end;
     });
   }
@@ -58,9 +71,9 @@ class SchedulerService {
   }
 
   moveToNextWorkingStart(date, config) {
-    const next = new Date(date);
-
-    next.setDate(next.getDate() + 1);
+    const next = DateTime.fromJSDate(date, { zone: APP_TIMEZONE })
+      .plus({ days: 1 })
+      .toJSDate();
 
     return this.getDayTime(next, config.workingHours.start);
   }
@@ -104,7 +117,6 @@ class SchedulerService {
 
   addWorkingSeconds(startTime, seconds, config, holidays) {
     let current = new Date(startTime);
-
     let remaining = seconds;
 
     while (remaining > 0) {
@@ -144,21 +156,26 @@ class SchedulerService {
       }
 
       remaining -= available;
-
       current = new Date(segmentEnd.getTime() + 1000);
     }
 
     return current;
   }
 
+  // ── CHANGED: added `onlyRunning` param ──────────────────────────
+  // During a priority rebuild, pending slots are exactly what's being
+  // recomputed — they're not real conflicts. Only running slots are.
+  // Default stays false so scheduleJob's existing behavior is untouched.
   async hasMachineConflict(
     machineId,
     startTime,
     endTime,
     reservedMachines = [],
+    onlyRunning = false,
   ) {
     const dbConflict = await ProductionSlot.findOne({
       machineId,
+      ...(onlyRunning ? { status: "running" } : {}),
       plannedStartTime: { $lt: endTime },
       plannedEndTime: { $gt: startTime },
     }).sort({
@@ -185,7 +202,7 @@ class SchedulerService {
     return null;
   }
 
-  //Find the first free slot on a machine
+  // ── CHANGED: threads `onlyRunning` through ──────────────────────
   async findMachineSlot(
     machineId,
     desiredStart,
@@ -193,6 +210,7 @@ class SchedulerService {
     config,
     holidays,
     reservedMachines = [],
+    onlyRunning = false,
   ) {
     let start = new Date(desiredStart);
 
@@ -211,22 +229,18 @@ class SchedulerService {
         start,
         end,
         reservedMachines,
+        onlyRunning,
       );
 
       if (!conflict) {
-        return {
-          startTime: start,
-          endTime: end,
-        };
+        return { startTime: start, endTime: end };
       }
 
-      // Machine busy.
-      // Try again immediately after it becomes free.
       start = new Date(conflict.plannedEndTime.getTime() + 1000);
     }
   }
 
-  //Find the best machine
+  // ── CHANGED: threads `onlyRunning` through ──────────────────────
   async findBestMachine(
     process,
     desiredStart,
@@ -235,6 +249,7 @@ class SchedulerService {
     config,
     holidays,
     reservedMachines = [],
+    onlyRunning = false,
   ) {
     const machines = await Machine.find({
       name: process.requiredMachineType,
@@ -256,6 +271,7 @@ class SchedulerService {
         config,
         holidays,
         reservedMachines,
+        onlyRunning,
       );
 
       if (!best || slot.startTime < best.startTime) {
@@ -270,29 +286,34 @@ class SchedulerService {
     return best;
   }
 
-  //Worker Conflict
-
-  async hasWorkerConflict(workerId, startTime, endTime, reservedWorkers = []) {
+  // ── CHANGED: added `onlyRunning` param ──────────────────────────
+  async hasWorkerConflict(
+    workerId,
+    startTime,
+    endTime,
+    reservedWorkers = [],
+    onlyRunning = false,
+  ) {
     const dbConflict = await ProductionSlot.findOne({
       "workers.workerId": workerId,
+      ...(onlyRunning ? { status: "running" } : {}),
       plannedStartTime: { $lt: endTime },
       plannedEndTime: { $gt: startTime },
-    });
+    }).sort({ plannedEndTime: 1 });
 
-    if (dbConflict) {
-      return true;
-    }
+    if (dbConflict) return dbConflict; // return the doc, not just true
 
-    return reservedWorkers.some(
+    const memoryConflict = reservedWorkers.find(
       (w) =>
         w.workerId.toString() === workerId.toString() &&
         w.startTime < endTime &&
         w.endTime > startTime,
     );
+
+    return memoryConflict ? { plannedEndTime: memoryConflict.endTime } : null;
   }
 
-  //Get Available Workers
-
+  // ── CHANGED: threads `onlyRunning` through ──────────────────────
   async getAvailableWorkers(
     machine,
     startTime,
@@ -300,12 +321,12 @@ class SchedulerService {
     requiredManpower,
     locationId,
     reservedWorkers = [],
+    onlyRunning = false,
   ) {
     if (!machine?.requiredSkills?.length) {
       return [];
     }
 
-    // normalize to strings — workers store skills as strings, machine has ObjectIds
     const skillIds = machine.requiredSkills.map((s) => s.toString());
 
     const workers = await Worker.find({
@@ -325,7 +346,9 @@ class SchedulerService {
         startTime,
         endTime,
         reservedWorkers,
+        onlyRunning,
       );
+
       if (!conflict) {
         available.push(worker);
       }
@@ -336,7 +359,7 @@ class SchedulerService {
 
     return available;
   }
-  //Reserve Workers
+
   createWorkerAssignments(workers) {
     return workers.map((worker) => ({
       workerId: worker._id,
@@ -344,6 +367,7 @@ class SchedulerService {
     }));
   }
 
+  // ── UNCHANGED: kept for reference / any other caller still using it ──
   async scheduleJob(jobId, locationId) {
     const job = await Job.findById(jobId);
     if (!job) throw new Error("Job not found");
@@ -358,18 +382,8 @@ class SchedulerService {
 
     const holidays = await Holiday.find({ locationId });
 
-    // Earliest we could possibly start: later of (right now)
-
     const now = new Date();
-
     const baseStart = this.normalizeWorkingTime(now, config, holidays);
-
-    console.log({
-      now,
-      baseStart,
-      workStart: config.workingHours.start,
-      workEnd: config.workingHours.end,
-    });
 
     const schedule = [];
     const reservedMachines = [];
@@ -467,15 +481,219 @@ class SchedulerService {
 
       await JobStep.findByIdAndUpdate(step._id, { status: "pending" });
 
-      // IMPORTANT: use actual scheduled start, not desiredStart
-      // If the machine was busy and got pushed forward, prevStepStart
-      // reflects where it actually landed — so step 2's desiredStart
-      // is correctly one cycle after step 1's real start
       prevStepStart = machineResult.startTime;
       prevCycleTime = cycleTimeSec;
     }
 
     return schedule;
+  }
+
+  // ── NEW: priority-aware rebuild across the whole location ──────────
+  async rebuildSchedule(locationId) {
+    const config = await WorkConfig.findOne({ locationId });
+    if (!config) throw new Error("Work configuration not found");
+
+    const holidays = await Holiday.find({ locationId });
+
+    const now = new Date();
+    const baseStart = this.normalizeWorkingTime(now, config, holidays);
+
+    // Priority ascending = most urgent first (1 = Urgent).
+    // Tie-break by orderDate/createdAt so same-priority jobs keep a
+    // stable relative order across repeated rebuilds.
+    const jobs = await Job.find({
+      locationId,
+      status: { $nin: ["completed", "cancelled"] },
+    }).sort({ priority: 1, orderDate: 1, createdAt: 1 });
+
+    if (!jobs.length) {
+      return { success: true, shifted: [] };
+    }
+
+    const jobIds = jobs.map((j) => j._id);
+
+    const steps = await JobStep.find({ jobId: { $in: jobIds } })
+      .populate("processId")
+      .sort({ jobId: 1, sequence: 1 });
+
+    const slots = await ProductionSlot.find({
+      jobStepId: { $in: steps.map((s) => s._id) },
+    });
+
+    const slotsByStep = new Map();
+    for (const slot of slots) {
+      const key = slot.jobStepId.toString();
+      if (!slotsByStep.has(key)) slotsByStep.set(key, []);
+      slotsByStep.get(key).push(slot);
+    }
+
+    const pickActiveSlot = (stepSlots = []) =>
+      stepSlots.find((s) => s.status === "running") ||
+      stepSlots.find((s) => s.status === "pending") ||
+      null;
+
+    // Only RUNNING slots are hard, immovable reservations during a rebuild.
+    const reservedMachines = [];
+    const reservedWorkers = [];
+
+    for (const slot of slots) {
+      if (slot.status !== "running") continue;
+
+      reservedMachines.push({
+        machineId: slot.machineId,
+        startTime: slot.plannedStartTime,
+        endTime: slot.plannedEndTime,
+      });
+
+      for (const w of slot.workers || []) {
+        reservedWorkers.push({
+          workerId: w.workerId,
+          startTime: slot.plannedStartTime,
+          endTime: slot.plannedEndTime,
+        });
+      }
+    }
+
+    const stepsByJob = new Map();
+    for (const step of steps) {
+      const key = step.jobId.toString();
+      if (!stepsByJob.has(key)) stepsByJob.set(key, []);
+      stepsByJob.get(key).push(step);
+    }
+
+    const shifted = [];
+
+    for (const job of jobs) {
+      const jobSteps = (stepsByJob.get(job._id.toString()) || []).sort(
+        (a, b) => a.sequence - b.sequence,
+      );
+
+      let prevStepStart = null;
+      let prevCycleTime = null;
+      let jobFreezeFloor = baseStart;
+
+      for (const step of jobSteps) {
+        const stepSlots = slotsByStep.get(step._id.toString()) || [];
+        const activeSlot = pickActiveSlot(stepSlots);
+        const cycleTimeSec = step.processId.cycleTime;
+
+        // Already running — frozen. Seed the pipeline offset from it
+        // so this job's remaining pending steps line up correctly,
+        // but don't touch its slot.
+        if (activeSlot?.status === "running") {
+          prevStepStart =
+            activeSlot.actualStartTime || activeSlot.plannedStartTime;
+          prevCycleTime = cycleTimeSec;
+          jobFreezeFloor = activeSlot.plannedEndTime;
+          continue;
+        }
+
+        // Movable — recompute from scratch. Priority order (jobs loop
+        // outer) decides who gets first claim on each machine/worker.
+        const desiredStart =
+          prevStepStart === null
+            ? jobFreezeFloor
+            : this.addWorkingSeconds(
+                prevStepStart,
+                prevCycleTime,
+                config,
+                holidays,
+              );
+
+        const flooredStart =
+          desiredStart < jobFreezeFloor ? jobFreezeFloor : desiredStart;
+
+        const effectiveCycleTime =
+          prevCycleTime === null
+            ? cycleTimeSec
+            : Math.max(cycleTimeSec, prevCycleTime);
+
+        const durationSec =
+          (job.quantity - 1) * effectiveCycleTime + cycleTimeSec;
+
+        const machineResult = await this.findBestMachine(
+          step.processId,
+          flooredStart,
+          durationSec,
+          locationId,
+          config,
+          holidays,
+          reservedMachines,
+          true, // onlyRunning — pending slots don't block during rebuild
+        );
+
+        if (!machineResult) {
+          throw new Error(
+            `No machine available for ${job.ref_code} - ${step.processId.name}`,
+          );
+        }
+
+        const workers = await this.getAvailableWorkers(
+          machineResult.machine,
+          machineResult.startTime,
+          machineResult.endTime,
+          step.requiredManpower,
+          locationId,
+          reservedWorkers,
+          true, // onlyRunning
+        );
+
+        if (workers.length < step.requiredManpower) {
+          throw new Error(
+            `Not enough workers for ${job.ref_code} - ${step.processId.name}`,
+          );
+        }
+
+        reservedMachines.push({
+          machineId: machineResult.machine._id,
+          startTime: machineResult.startTime,
+          endTime: machineResult.endTime,
+        });
+
+        for (const worker of workers) {
+          reservedWorkers.push({
+            workerId: worker._id,
+            startTime: machineResult.startTime,
+            endTime: machineResult.endTime,
+          });
+        }
+
+        if (
+          activeSlot &&
+          new Date(activeSlot.plannedStartTime).getTime() !==
+            machineResult.startTime.getTime()
+        ) {
+          shifted.push({
+            jobId: job._id,
+            jobRef: job.ref_code,
+            step: step.processId.name,
+            from: activeSlot.plannedStartTime,
+            to: machineResult.startTime,
+          });
+        }
+
+        await ProductionSlot.findOneAndUpdate(
+          { jobStepId: step._id, status: "pending" },
+          {
+            jobId: job._id,
+            jobStepId: step._id,
+            machineId: machineResult.machine._id,
+            workers: this.createWorkerAssignments(workers),
+            plannedStartTime: machineResult.startTime,
+            plannedEndTime: machineResult.endTime,
+            status: "pending",
+          },
+          { upsert: true, new: true },
+        );
+
+        await JobStep.findByIdAndUpdate(step._id, { status: "pending" });
+
+        prevStepStart = machineResult.startTime;
+        prevCycleTime = cycleTimeSec;
+      }
+    }
+
+    return { success: true, shifted };
   }
 }
 

@@ -274,7 +274,7 @@ class JobService {
     }
 
     // Schedule the complete job once
-    await SchedulerService.scheduleJob(job._id, job.locationId);
+    await SchedulerService.rebuildSchedule(job.locationId);
 
     // Reload steps after scheduling
     const steps = await JobStep.find({ jobId })
