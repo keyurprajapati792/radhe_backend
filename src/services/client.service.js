@@ -4,6 +4,7 @@ class ClientService {
   // CREATE
   async createClient(data) {
     const {
+      customerCode,
       customerName,
       legalName,
       contactPerson,
@@ -30,6 +31,7 @@ class ClientService {
     }
 
     const client = await Client.create({
+      customerCode,
       customerName,
       legalName,
       contactPerson,
@@ -68,6 +70,12 @@ class ClientService {
 
     if (search) {
       filter.$or = [
+        {
+          customerCode: {
+            $regex: search,
+            $options: "i",
+          },
+        },
         {
           customerName: {
             $regex: search,
