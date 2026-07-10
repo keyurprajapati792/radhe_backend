@@ -2,6 +2,13 @@ import mongoose from "mongoose";
 
 const clientSchema = new mongoose.Schema(
   {
+    customerCode: {
+      type: String,
+      trim: true,
+      unique: true,
+      required: true,
+    },
+
     customerName: {
       type: String,
       trim: true,
