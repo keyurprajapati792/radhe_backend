@@ -13,6 +13,7 @@ class JobService {
 
     const processes = await Process.find({
       productId,
+      isActive: true,
     }).sort({ sequence: 1 });
 
     const steps = processes.map((process) => ({

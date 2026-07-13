@@ -255,7 +255,6 @@ class SchedulerService {
       name: process.requiredMachineType,
       status: { $nin: ["maintenance"] },
       locationId,
-      isActive: true,
     });
 
     if (!machines.length) {
