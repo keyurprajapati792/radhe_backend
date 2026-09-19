@@ -101,7 +101,20 @@ class CalendarService {
 
     if (resource === "machine") {
       const slots = await ProductionSlot.find(baseFilter)
-        .populate({ path: "jobId", select: "name ref_code status locationId" })
+        .populate({
+          path: "jobId",
+          select: "name ref_code status locationId clientId productId",
+          populate: [
+            {
+              path: "clientId",
+              select: "customerName legalName customerCode",
+            },
+            {
+              path: "productId",
+              select: "name",
+            },
+          ],
+        })
         .populate("machineId", "name machineNumber")
         .populate({
           path: "jobStepId",
@@ -118,8 +131,16 @@ class CalendarService {
           id: s._id.toString(),
           resourceId: s.machineId._id.toString(),
           resourceName: `${s.machineId.machineNumber ? s.machineId.machineNumber + " - " : ""}${s.machineId.name}`,
+
+          clientName:
+            s.jobId?.clientId?.customerName ||
+            s.jobId?.clientId?.legalName ||
+            s.jobId?.clientId?.customerCode ||
+            "",
+
           jobNumber: s.jobId?.ref_code,
-          jobName: s.jobId?.name,
+          productName: s.jobId?.productId?.name || "",
+
           process: s.jobStepId?.processId?.name,
           start: s.plannedStartTime,
           end: s.plannedEndTime,
@@ -127,7 +148,14 @@ class CalendarService {
         }));
     } else {
       const slots = await ProductionSlot.find(baseFilter)
-        .populate({ path: "jobId", select: "name ref_code status locationId" })
+        .populate({
+          path: "jobId",
+          select: "name ref_code status locationId clientId",
+          populate: {
+            path: "clientId",
+            select: "customerName legalName customerCode",
+          },
+        })
         .populate({
           path: "jobStepId",
           populate: { path: "processId", select: "name" },
@@ -152,8 +180,16 @@ class CalendarService {
             ]
               .filter(Boolean)
               .join(" "),
+
+            clientName:
+              slot.jobId?.clientId?.customerName ||
+              slot.jobId?.clientId?.legalName ||
+              slot.jobId?.clientId?.customerCode ||
+              "",
+
             jobNumber: slot.jobId?.ref_code,
-            jobName: slot.jobId?.name,
+            productName: slot.jobId?.productId?.name || "",
+
             process: slot.jobStepId?.processId?.name,
             start: slot.plannedStartTime,
             end: slot.plannedEndTime,
@@ -191,7 +227,9 @@ class CalendarService {
       return {
         id: e.id,
         group: e.resourceId,
-        content: e.jobNumber || "",
+        content: [e.clientName, e.jobNumber, e.productName]
+          .filter(Boolean)
+          .join("/"),
         start: e.start,
         end: e.end,
         jobNumber: e.jobNumber,
