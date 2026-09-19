@@ -9,22 +9,42 @@ class ProductionSlotService {
 
     const createdSlots = [];
 
-    for (const slotPayload of slots) {
-      // remove old slot if replanning
-      await ProductionSlot.deleteMany({
-        jobStepId: slotPayload.jobStepId,
-      });
+    // CHANGED: the old code called deleteMany({ jobStepId }) INSIDE the
+    // per-slot loop. For a step with multiple day-segments, creating
+    // segment 1's doc would immediately delete segment 0's doc that had
+    // just been created a moment earlier in the previous iteration —
+    // only the last segment processed for each step ever survived.
+    // Deleting once per unique step, up front, before any creates
+    // happen, fixes that.
+    const uniqueStepIds = [
+      ...new Set(slots.map((s) => s.jobStepId.toString())),
+    ];
 
+    await ProductionSlot.deleteMany({
+      jobStepId: { $in: uniqueStepIds },
+    });
+
+    const assignedMinutesByStep = new Map();
+
+    for (const slotPayload of slots) {
       const slot = await ProductionSlot.create(slotPayload);
 
       const slotMinutes =
-        (new Date(slot.endTime) - new Date(slot.startTime)) / 1000 / 60;
+        (new Date(slot.plannedEndTime) - new Date(slot.plannedStartTime)) /
+        1000 /
+        60;
 
-      await JobStep.findByIdAndUpdate(slot.jobStepId, {
-        assignedMinutes: slotMinutes,
-      });
+      const stepKey = slot.jobStepId.toString();
+      assignedMinutesByStep.set(
+        stepKey,
+        (assignedMinutesByStep.get(stepKey) || 0) + slotMinutes,
+      );
 
       createdSlots.push(slot);
+    }
+
+    for (const [jobStepId, assignedMinutes] of assignedMinutesByStep) {
+      await JobStep.findByIdAndUpdate(jobStepId, { assignedMinutes });
     }
 
     return {

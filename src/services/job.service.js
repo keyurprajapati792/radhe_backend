@@ -16,6 +16,8 @@ class JobService {
       isActive: true,
     }).sort({ sequence: 1 });
 
+    console.log(processes);
+
     const steps = processes.map((process) => ({
       jobId: job._id,
       processId: process._id,
@@ -274,10 +276,8 @@ class JobService {
       throw new Error("Job not found");
     }
 
-    // Schedule the complete job once
     await SchedulerService.rebuildSchedule(job.locationId);
 
-    // Reload steps after scheduling
     const steps = await JobStep.find({ jobId })
       .populate("processId")
       .sort({ sequence: 1 });
@@ -285,15 +285,16 @@ class JobService {
     const enrichedSteps = [];
 
     for (const step of steps) {
-      const slot = await ProductionSlot.findOne({
+      const slots = await ProductionSlot.find({
         jobStepId: step._id,
       })
+        .sort({ segmentIndex: 1 })
         .populate("machineId")
         .populate("workers.workerId");
 
       enrichedSteps.push({
         ...step.toObject(),
-        schedule: slot,
+        schedule: slots,
       });
     }
 

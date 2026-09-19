@@ -13,6 +13,11 @@ const productionSlotSchema = new mongoose.Schema(
       ref: "JobStep",
       required: true,
     },
+    segmentIndex: {
+      type: Number,
+      default: 0,
+      required: true,
+    },
 
     machineId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -74,6 +79,16 @@ const productionSlotSchema = new mongoose.Schema(
       default: "pending",
     },
 
+    needsAttention: {
+      type: Boolean,
+      default: false,
+    },
+
+    shortfall: {
+      type: Number,
+      default: 0,
+    },
+
     producedQty: {
       type: Number,
       default: 0,
@@ -100,6 +115,7 @@ const productionSlotSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+productionSlotSchema.index({ jobStepId: 1, segmentIndex: 1 }, { unique: true });
 
 const ProductionSlot =
   mongoose.models.ProductionSlot ||

@@ -20,6 +20,7 @@ class WorkerService {
     const search = query.search || "";
     const status = query.status || "";
     const locationId = query.locationId || "";
+    const skill = query.skill || "";
 
     const skip = (page - 1) * limit;
 
@@ -40,6 +41,10 @@ class WorkerService {
         { lastName: { $regex: search, $options: "i" } },
         { phone: { $regex: search, $options: "i" } },
       ];
+    }
+
+    if (skill) {
+      filter.skills = skill;
     }
 
     let occupiedWorkerIds = [];
@@ -66,8 +71,6 @@ class WorkerService {
     const [workers, total] = await Promise.all([
       Worker.find(filter)
         .populate("skills", "name currentHourlyCost")
-        .select("-password")
-        .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
 

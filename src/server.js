@@ -23,6 +23,7 @@ import workConfigRoutes from "./routes/workConfig.routes.js";
 import holidayRoutes from "./routes/holday.routes.js";
 import skillsRoutes from "./routes/skill.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
+import calendarRoutes from "./routes/calendar.routes.js";
 
 dotenv.config();
 connectDB();
@@ -65,6 +66,7 @@ app.use("/v1/holiday", holidayRoutes);
 app.use("/v1/skills", skillsRoutes);
 app.use("/v1/scheduler", schedulerRoutes);
 app.use("/v1/dashboard", dashboardRoutes);
+app.use("/v1/calendar", calendarRoutes);
 
 app.get("/", (req, res) => {
   res.send("API Running");

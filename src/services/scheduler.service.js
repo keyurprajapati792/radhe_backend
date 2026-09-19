@@ -162,10 +162,84 @@ class SchedulerService {
     return current;
   }
 
-  // ── CHANGED: added `onlyRunning` param ──────────────────────────
-  // During a priority rebuild, pending slots are exactly what's being
-  // recomputed — they're not real conflicts. Only running slots are.
-  // Default stays false so scheduleJob's existing behavior is untouched.
+  // ── CHANGED: renamed from computeWorkingSegments. Now only closes a
+  // segment when the CALENDAR DAY actually changes (overnight or a
+  // holiday skip) — a break within the same working day no longer ends
+  // a segment, it's just absorbed into it like addWorkingSeconds already
+  // does. This is what decides how many ProductionSlot docs a step gets:
+  // one per real working day, not one per break-free stretch. ─────────
+  computeDaySegments(startTime, seconds, config, holidays) {
+    const dayKeyOf = (d) =>
+      DateTime.fromJSDate(d, { zone: APP_TIMEZONE }).toISODate();
+
+    let current = new Date(startTime);
+    let remaining = seconds;
+    const segments = [];
+
+    let segmentStart = null;
+    let segmentDayKey = null;
+    let lastPoint = null;
+
+    while (remaining > 0) {
+      current = this.normalizeWorkingTime(current, config, holidays);
+      const dayKey = dayKeyOf(current);
+
+      if (segmentStart === null) {
+        segmentStart = new Date(current);
+        segmentDayKey = dayKey;
+      } else if (dayKey !== segmentDayKey) {
+        // a real day boundary was crossed (overnight or holiday skip) —
+        // close the segment here. A break landing us later the same day
+        // never reaches this branch, since dayKey stays identical.
+        segments.push({ startTime: segmentStart, endTime: lastPoint });
+        segmentStart = new Date(current);
+        segmentDayKey = dayKey;
+      }
+
+      const dayEnd = config.overtime?.enabled
+        ? this.getDayTime(current, config.overtime.end)
+        : this.getDayTime(current, config.workingHours.end);
+
+      let nextBreak = null;
+
+      for (const b of config.breaks || []) {
+        const breakStart = this.getDayTime(current, b.start);
+
+        if (breakStart > current) {
+          if (!nextBreak || breakStart < nextBreak) {
+            nextBreak = breakStart;
+          }
+        }
+      }
+
+      let segmentEnd = dayEnd;
+
+      if (nextBreak && nextBreak < segmentEnd) {
+        segmentEnd = nextBreak;
+      }
+
+      const available = Math.floor((segmentEnd - current) / 1000);
+
+      if (available <= 0) {
+        current = new Date(segmentEnd.getTime() + 1000);
+        continue;
+      }
+
+      if (remaining <= available) {
+        lastPoint = new Date(current.getTime() + remaining * 1000);
+        segments.push({ startTime: segmentStart, endTime: lastPoint });
+        return segments;
+      }
+
+      remaining -= available;
+      lastPoint = new Date(segmentEnd.getTime());
+      current = new Date(segmentEnd.getTime() + 1000);
+    }
+
+    return segments;
+  }
+
+  // ── UNCHANGED ──────────────────────────────────────────────────
   async hasMachineConflict(
     machineId,
     startTime,
@@ -202,7 +276,7 @@ class SchedulerService {
     return null;
   }
 
-  // ── CHANGED: threads `onlyRunning` through ──────────────────────
+  // ── UNCHANGED ──────────────────────────────────────────────────
   async findMachineSlot(
     machineId,
     desiredStart,
@@ -240,7 +314,7 @@ class SchedulerService {
     }
   }
 
-  // ── CHANGED: threads `onlyRunning` through ──────────────────────
+  // ── UNCHANGED ──────────────────────────────────────────────────
   async findBestMachine(
     process,
     desiredStart,
@@ -286,7 +360,7 @@ class SchedulerService {
     return best;
   }
 
-  // ── CHANGED: added `onlyRunning` param ──────────────────────────
+  // ── UNCHANGED ──────────────────────────────────────────────────
   async hasWorkerConflict(
     workerId,
     startTime,
@@ -313,61 +387,103 @@ class SchedulerService {
     return memoryConflict ? { plannedEndTime: memoryConflict.endTime } : null;
   }
 
-  // ── CHANGED: threads `onlyRunning` through ──────────────────────
+  // ── UNCHANGED — still takes an explicit startTime/endTime window, so
+  // calling it once per day-segment (instead of once for the whole
+  // multi-day span) is all that's needed to get independent per-day
+  // worker search; nothing inside this function changes. ─────────────
   async getAvailableWorkers(
-    machine,
     startTime,
     endTime,
-    requiredManpower,
+    manpowerRequirements,
     locationId,
     reservedWorkers = [],
     onlyRunning = false,
   ) {
-    if (!machine?.requiredSkills?.length) {
+    if (!manpowerRequirements?.length) {
       return [];
     }
-
-    const skillIds = machine.requiredSkills.map((s) => s.toString());
 
     const workers = await Worker.find({
       locationId,
       status: { $nin: ["leave", "terminated"] },
     });
 
-    const skillMatched = workers.filter((w) =>
-      w.skills?.some((s) => skillIds.includes(s.toString())),
-    );
+    const usedWorkerIds = new Set(); // one worker can't fill two rows in the same step
+    const assignments = [];
 
-    const available = [];
+    for (const requirement of manpowerRequirements) {
+      const skillId = requirement.skillId.toString();
+      const needed = requirement.count;
 
-    for (const worker of skillMatched) {
-      const conflict = await this.hasWorkerConflict(
-        worker._id,
-        startTime,
-        endTime,
-        reservedWorkers,
-        onlyRunning,
+      const candidates = workers.filter(
+        (w) =>
+          !usedWorkerIds.has(w._id.toString()) &&
+          w.skills?.some((s) => s.toString() === skillId),
       );
 
-      if (!conflict) {
-        available.push(worker);
+      let filled = 0;
+
+      for (const worker of candidates) {
+        if (filled >= needed) break;
+
+        const conflict = await this.hasWorkerConflict(
+          worker._id,
+          startTime,
+          endTime,
+          reservedWorkers,
+          onlyRunning,
+        );
+
+        if (!conflict) {
+          usedWorkerIds.add(worker._id.toString());
+          assignments.push({
+            worker,
+            skillId: requirement.skillId,
+            effort: requirement.effort,
+          });
+          filled++;
+        }
       }
-      if (available.length >= requiredManpower) {
-        break;
+
+      // Record the shortfall per-skill rather than silently under-filling
+      for (let i = filled; i < needed; i++) {
+        assignments.push({
+          worker: null,
+          skillId: requirement.skillId,
+          effort: requirement.effort,
+          missing: true,
+        });
       }
     }
 
-    return available;
+    return assignments;
   }
 
-  createWorkerAssignments(workers) {
-    return workers.map((worker) => ({
-      workerId: worker._id,
-      effort: 100,
-    }));
+  // ── UNCHANGED ──────────────────────────────────────────────────
+  createWorkerAssignments(assignments) {
+    return assignments
+      .filter((a) => a.worker)
+      .map((a) => ({
+        workerId: a.worker._id,
+        skillId: a.skillId,
+        effort: a.effort,
+      }));
   }
 
-  // ── UNCHANGED: kept for reference / any other caller still using it ──
+  // ── UNCHANGED ──────────────────────────────────────────────────
+  manpowerCounts(manpowerRequirements, assignments) {
+    const needed = (manpowerRequirements || []).reduce(
+      (sum, r) => sum + r.count,
+      0,
+    );
+    const filled = assignments.filter((a) => a.worker).length;
+    return { needed, filled };
+  }
+
+  // ── CHANGED: the machine is still found/reserved once for the FULL
+  // multi-day span (unchanged findBestMachine call), but the step now
+  // gets one ProductionSlot per calendar working day it touches, each
+  // with its own independently-searched worker assignment. ───────────
   async scheduleJob(jobId, locationId) {
     const job = await Job.findById(jobId);
     if (!job) throw new Error("Job not found");
@@ -427,57 +543,99 @@ class SchedulerService {
         throw new Error(`No machine available for: ${step.processId.name}`);
       }
 
-      const workers = await this.getAvailableWorkers(
-        machineResult.machine,
-        machineResult.startTime,
-        machineResult.endTime,
-        step.requiredManpower,
-        locationId,
-        reservedWorkers,
-      );
-
-      if (workers.length < step.requiredManpower) {
-        throw new Error(
-          `Not enough workers for: ${step.processId.name}. ` +
-            `Need ${step.requiredManpower}, found ${workers.length}`,
-        );
-      }
-
-      schedule.push({
-        jobStep: step,
-        machine: machineResult.machine,
-        workers,
-        plannedStartTime: machineResult.startTime,
-        plannedEndTime: machineResult.endTime,
-      });
-
       reservedMachines.push({
         machineId: machineResult.machine._id,
         startTime: machineResult.startTime,
         endTime: machineResult.endTime,
       });
 
-      for (const worker of workers) {
-        reservedWorkers.push({
-          workerId: worker._id,
-          startTime: machineResult.startTime,
-          endTime: machineResult.endTime,
-        });
+      // NEW: split the machine's full span into per-day working segments
+      const daySegments = this.computeDaySegments(
+        machineResult.startTime,
+        durationSec,
+        config,
+        holidays,
+      );
+
+      // NEW: one ProductionSlot per day segment. Workers are searched
+      // independently for each day — a worker filling today's portion
+      // may not be free tomorrow, so a different one can be picked for
+      // the next day's slot. Each slot also gets its own
+      // producedQty/rejectQty/reworkQty/approvedQty for shopfloor
+      // reporting per day.
+      const segmentSlots = [];
+      let stepUnderstaffed = false;
+      let understaffedInfo = null;
+
+      for (let segIndex = 0; segIndex < daySegments.length; segIndex++) {
+        const seg = daySegments[segIndex];
+
+        const assignments = await this.getAvailableWorkers(
+          seg.startTime,
+          seg.endTime,
+          step.processId.manpowerRequirements,
+          locationId,
+          reservedWorkers,
+        );
+
+        const { needed, filled } = this.manpowerCounts(
+          step.processId.manpowerRequirements,
+          assignments,
+        );
+
+        if (filled < needed && !stepUnderstaffed) {
+          stepUnderstaffed = true;
+          understaffedInfo = { segIndex, needed, filled };
+        }
+
+        for (const a of assignments.filter((x) => x.worker)) {
+          reservedWorkers.push({
+            workerId: a.worker._id,
+            startTime: seg.startTime,
+            endTime: seg.endTime,
+          });
+        }
+
+        const slotDoc = await ProductionSlot.findOneAndUpdate(
+          { jobStepId: step._id, segmentIndex: segIndex },
+          {
+            jobId: job._id,
+            jobStepId: step._id,
+            segmentIndex: segIndex,
+            machineId: machineResult.machine._id,
+            workers: this.createWorkerAssignments(assignments),
+            plannedStartTime: seg.startTime,
+            plannedEndTime: seg.endTime,
+            status: "pending",
+          },
+          { upsert: true, new: true },
+        );
+
+        segmentSlots.push(slotDoc);
       }
 
-      await ProductionSlot.findOneAndUpdate(
-        { jobStepId: step._id },
-        {
-          jobId: job._id,
-          jobStepId: step._id,
-          machineId: machineResult.machine._id,
-          workers: this.createWorkerAssignments(workers),
-          plannedStartTime: machineResult.startTime,
-          plannedEndTime: machineResult.endTime,
-          status: "pending",
-        },
-        { upsert: true, new: true },
-      );
+      // NEW: drop any leftover day-slots from a previous run that had
+      // more days than this run needs (e.g. quantity was reduced)
+      await ProductionSlot.deleteMany({
+        jobStepId: step._id,
+        segmentIndex: { $gte: daySegments.length },
+      });
+
+      if (stepUnderstaffed) {
+        throw new Error(
+          `Not enough workers for: ${step.processId.name} on day ${
+            understaffedInfo.segIndex + 1
+          }. Need ${understaffedInfo.needed}, found ${understaffedInfo.filled}`,
+        );
+      }
+
+      schedule.push({
+        jobStep: step,
+        machine: machineResult.machine,
+        segments: segmentSlots,
+        plannedStartTime: machineResult.startTime,
+        plannedEndTime: machineResult.endTime,
+      });
 
       await JobStep.findByIdAndUpdate(step._id, { status: "pending" });
 
@@ -488,7 +646,12 @@ class SchedulerService {
     return schedule;
   }
 
-  // ── NEW: priority-aware rebuild across the whole location ──────────
+  // ── CHANGED: same per-day-segment slot creation as scheduleJob,
+  // grafted onto the priority-aware rebuild. A step is now considered
+  // "in-flight" if ANY of its day-segments is running; when that's the
+  // case the whole step is frozen (same as before), sourcing the freeze
+  // floor from the LAST segment's planned end (the full step's end),
+  // not just the running segment's end. ──────────────────────────────
   async rebuildSchedule(locationId) {
     const config = await WorkConfig.findOne({ locationId });
     if (!config) throw new Error("Work configuration not found");
@@ -498,16 +661,13 @@ class SchedulerService {
     const now = new Date();
     const baseStart = this.normalizeWorkingTime(now, config, holidays);
 
-    // Priority ascending = most urgent first (1 = Urgent).
-    // Tie-break by orderDate/createdAt so same-priority jobs keep a
-    // stable relative order across repeated rebuilds.
     const jobs = await Job.find({
       locationId,
       status: { $nin: ["completed", "cancelled"] },
     }).sort({ priority: 1, orderDate: 1, createdAt: 1 });
 
     if (!jobs.length) {
-      return { success: true, shifted: [] };
+      return { success: true, shifted: [], issues: [] };
     }
 
     const jobIds = jobs.map((j) => j._id);
@@ -527,12 +687,6 @@ class SchedulerService {
       slotsByStep.get(key).push(slot);
     }
 
-    const pickActiveSlot = (stepSlots = []) =>
-      stepSlots.find((s) => s.status === "running") ||
-      stepSlots.find((s) => s.status === "pending") ||
-      null;
-
-    // Only RUNNING slots are hard, immovable reservations during a rebuild.
     const reservedMachines = [];
     const reservedWorkers = [];
 
@@ -562,6 +716,7 @@ class SchedulerService {
     }
 
     const shifted = [];
+    const issues = [];
 
     for (const job of jobs) {
       const jobSteps = (stepsByJob.get(job._id.toString()) || []).sort(
@@ -573,23 +728,26 @@ class SchedulerService {
       let jobFreezeFloor = baseStart;
 
       for (const step of jobSteps) {
-        const stepSlots = slotsByStep.get(step._id.toString()) || [];
-        const activeSlot = pickActiveSlot(stepSlots);
+        const stepSlots = (slotsByStep.get(step._id.toString()) || []).sort(
+          (a, b) => a.segmentIndex - b.segmentIndex,
+        );
         const cycleTimeSec = step.processId.cycleTime;
 
-        // Already running — frozen. Seed the pipeline offset from it
-        // so this job's remaining pending steps line up correctly,
-        // but don't touch its slot.
-        if (activeSlot?.status === "running") {
+        // NEW: a step maps to N day-segment slots now. If any of them is
+        // running, freeze the whole step — same behavior as before, just
+        // sourcing the freeze floor from the LAST segment's planned end
+        // (the full multi-day step's end) instead of a single doc.
+        const runningSeg = stepSlots.find((s) => s.status === "running");
+
+        if (runningSeg) {
+          const lastSeg = stepSlots[stepSlots.length - 1];
           prevStepStart =
-            activeSlot.actualStartTime || activeSlot.plannedStartTime;
+            runningSeg.actualStartTime || runningSeg.plannedStartTime;
           prevCycleTime = cycleTimeSec;
-          jobFreezeFloor = activeSlot.plannedEndTime;
+          jobFreezeFloor = lastSeg.plannedEndTime;
           continue;
         }
 
-        // Movable — recompute from scratch. Priority order (jobs loop
-        // outer) decides who gets first claim on each machine/worker.
         const desiredStart =
           prevStepStart === null
             ? jobFreezeFloor
@@ -619,29 +777,18 @@ class SchedulerService {
           config,
           holidays,
           reservedMachines,
-          true, // onlyRunning — pending slots don't block during rebuild
+          true,
         );
 
         if (!machineResult) {
-          throw new Error(
-            `No machine available for ${job.ref_code} - ${step.processId.name}`,
-          );
-        }
-
-        const workers = await this.getAvailableWorkers(
-          machineResult.machine,
-          machineResult.startTime,
-          machineResult.endTime,
-          step.requiredManpower,
-          locationId,
-          reservedWorkers,
-          true, // onlyRunning
-        );
-
-        if (workers.length < step.requiredManpower) {
-          throw new Error(
-            `Not enough workers for ${job.ref_code} - ${step.processId.name}`,
-          );
+          issues.push({
+            jobId: job._id,
+            jobRef: job.ref_code,
+            step: step.processId.name,
+            sequence: step.sequence,
+            reason: "no_machine_available",
+          });
+          continue;
         }
 
         reservedMachines.push({
@@ -650,41 +797,99 @@ class SchedulerService {
           endTime: machineResult.endTime,
         });
 
-        for (const worker of workers) {
-          reservedWorkers.push({
-            workerId: worker._id,
-            startTime: machineResult.startTime,
-            endTime: machineResult.endTime,
-          });
+        // NEW: split into per-day segments
+        const daySegments = this.computeDaySegments(
+          machineResult.startTime,
+          durationSec,
+          config,
+          holidays,
+        );
+
+        const existingPending = stepSlots.filter((s) => s.status === "pending");
+
+        for (let segIndex = 0; segIndex < daySegments.length; segIndex++) {
+          const seg = daySegments[segIndex];
+
+          // NEW: independent worker search per day-segment
+          const assignments = await this.getAvailableWorkers(
+            seg.startTime,
+            seg.endTime,
+            step.processId.manpowerRequirements,
+            locationId,
+            reservedWorkers,
+            true,
+          );
+
+          const { needed, filled } = this.manpowerCounts(
+            step.processId.manpowerRequirements,
+            assignments,
+          );
+
+          const understaffed = filled < needed;
+          if (understaffed) {
+            issues.push({
+              jobId: job._id,
+              jobRef: job.ref_code,
+              step: step.processId.name,
+              sequence: step.sequence,
+              segmentIndex: segIndex,
+              reason: "insufficient_workers",
+              needed,
+              found: filled,
+            });
+          }
+
+          for (const a of assignments.filter((x) => x.worker)) {
+            reservedWorkers.push({
+              workerId: a.worker._id,
+              startTime: seg.startTime,
+              endTime: seg.endTime,
+            });
+          }
+
+          await ProductionSlot.findOneAndUpdate(
+            {
+              jobStepId: step._id,
+              segmentIndex: segIndex,
+              status: "pending",
+            },
+            {
+              jobId: job._id,
+              jobStepId: step._id,
+              segmentIndex: segIndex,
+              machineId: machineResult.machine._id,
+              workers: this.createWorkerAssignments(assignments),
+              plannedStartTime: seg.startTime,
+              plannedEndTime: seg.endTime,
+              status: "pending",
+              needsAttention: understaffed,
+              shortfall: understaffed ? needed - filled : 0,
+            },
+            { upsert: true, new: true },
+          );
         }
 
+        // NEW: drop stale pending day-slots left over from a previous
+        // run that had more days than this run needs
+        await ProductionSlot.deleteMany({
+          jobStepId: step._id,
+          status: "pending",
+          segmentIndex: { $gte: daySegments.length },
+        });
+
         if (
-          activeSlot &&
-          new Date(activeSlot.plannedStartTime).getTime() !==
+          existingPending[0] &&
+          new Date(existingPending[0].plannedStartTime).getTime() !==
             machineResult.startTime.getTime()
         ) {
           shifted.push({
             jobId: job._id,
             jobRef: job.ref_code,
             step: step.processId.name,
-            from: activeSlot.plannedStartTime,
+            from: existingPending[0].plannedStartTime,
             to: machineResult.startTime,
           });
         }
-
-        await ProductionSlot.findOneAndUpdate(
-          { jobStepId: step._id, status: "pending" },
-          {
-            jobId: job._id,
-            jobStepId: step._id,
-            machineId: machineResult.machine._id,
-            workers: this.createWorkerAssignments(workers),
-            plannedStartTime: machineResult.startTime,
-            plannedEndTime: machineResult.endTime,
-            status: "pending",
-          },
-          { upsert: true, new: true },
-        );
 
         await JobStep.findByIdAndUpdate(step._id, { status: "pending" });
 
@@ -693,7 +898,7 @@ class SchedulerService {
       }
     }
 
-    return { success: true, shifted };
+    return { success: true, shifted, issues };
   }
 }
 

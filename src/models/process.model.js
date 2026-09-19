@@ -35,6 +35,28 @@ const processSchema = new mongoose.Schema({
     required: true,
   },
 
+  manpowerRequirements: [
+    {
+      skillId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Skill",
+        required: true,
+      },
+      count: {
+        type: Number,
+        required: true,
+        min: 1,
+      },
+      effort: {
+        type: Number,
+        required: true,
+        min: 1,
+        max: 100,
+        default: 100,
+      },
+    },
+  ],
+
   sequence: {
     type: Number,
     required: true,

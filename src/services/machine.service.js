@@ -19,6 +19,7 @@ class MachineService {
     const search = query.search || "";
     const locationId = query.locationId;
     const status = query.status;
+    const skill = query.skill || "";
 
     const skip = (page - 1) * limit;
 
@@ -38,6 +39,10 @@ class MachineService {
         { name: { $regex: search, $options: "i" } },
         { machineNumber: { $regex: search, $options: "i" } },
       ];
+    }
+
+    if (skill) {
+      filter.requiredSkills = skill;
     }
 
     const [machines, total] = await Promise.all([
