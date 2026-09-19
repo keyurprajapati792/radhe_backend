@@ -16,6 +16,7 @@ class MachineService {
   async getMachines(query = {}) {
     const page = parseInt(query.page) || 1;
     const limit = parseInt(query.limit) || 10;
+
     const search = query.search || "";
     const locationId = query.locationId;
     const status = query.status;
@@ -29,15 +30,34 @@ class MachineService {
       filter.locationId = Number(locationId);
     }
 
-    // Only filter stored statuses
-    if (status && status !== "running") {
+    /*
+     * For available/running, the actual status is derived from
+     * ProductionSlot.
+     *
+     * Both are based on machines whose stored status is "available".
+     *
+     * Other statuses continue using Machine.status directly.
+     */
+    if (status === "available" || status === "running") {
+      filter.status = "available";
+    } else if (status) {
       filter.status = status;
     }
 
     if (search) {
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { machineNumber: { $regex: search, $options: "i" } },
+        {
+          name: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          machineNumber: {
+            $regex: search,
+            $options: "i",
+          },
+        },
       ];
     }
 
@@ -45,61 +65,90 @@ class MachineService {
       filter.requiredSkills = skill;
     }
 
+    /*
+     * For derived statuses we cannot paginate at the Mongo query level,
+     * because we need to know which machines are currently running first.
+     */
+    if (status === "available" || status === "running") {
+      const machines = await Machine.find(filter)
+        .populate("requiredSkills", "name currentHourlyCost")
+        .sort({ createdAt: -1 })
+        .lean();
+
+      const machineIds = machines.map((machine) => machine._id);
+
+      const runningSlots = await ProductionSlot.find({
+        machineId: {
+          $in: machineIds,
+        },
+        status: "running",
+      })
+        .select("machineId jobId jobStepId")
+        .lean();
+
+      const runningMachineIds = new Set(
+        runningSlots.map((slot) => slot.machineId.toString()),
+      );
+
+      let formattedMachines = machines.map((machine) => {
+        const isRunning = runningMachineIds.has(machine._id.toString());
+
+        return {
+          ...machine,
+          status: isRunning ? "running" : "available",
+        };
+      });
+
+      /*
+       * Now apply the derived status filter.
+       */
+      formattedMachines = formattedMachines.filter(
+        (machine) => machine.status === status,
+      );
+
+      const total = formattedMachines.length;
+
+      /*
+       * Pagination happens AFTER derived status filtering.
+       */
+      const paginatedMachines = formattedMachines.slice(skip, skip + limit);
+
+      return {
+        success: true,
+        statustype: "OK",
+        data: paginatedMachines,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
+    }
+
+    /*
+     * Normal stored-status filtering.
+     */
     const [machines, total] = await Promise.all([
       Machine.find(filter)
         .populate("requiredSkills", "name currentHourlyCost")
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
 
       Machine.countDocuments(filter),
     ]);
 
-    const machineIds = machines.map((m) => m._id);
-
-    const runningSlots = await ProductionSlot.find({
-      machineId: { $in: machineIds },
-      status: "running",
-    })
-      .select("machineId jobId jobStepId")
-      .lean();
-
-    const runningMachineIds = new Set(
-      runningSlots.map((slot) => slot.machineId.toString()),
-    );
-
-    let formattedMachines = machines.map((machine) => {
-      const data = machine.toObject();
-
-      // Only override if machine is operationally available
-      if (
-        data.status === "available" &&
-        runningMachineIds.has(machine._id.toString())
-      ) {
-        data.status = "running";
-      }
-
-      return data;
-    });
-
-    // Handle derived status filtering
-    if (status === "running") {
-      formattedMachines = formattedMachines.filter(
-        (m) => m.status === "running",
-      );
-    }
-
     return {
       success: true,
       statustype: "OK",
-      data: formattedMachines,
+      data: machines,
       meta: {
-        total: status === "running" ? formattedMachines.length : total,
+        total,
         page,
         limit,
-        totalPages: Math.ceil(
-          (status === "running" ? formattedMachines.length : total) / limit,
-        ),
+        totalPages: Math.ceil(total / limit),
       },
     };
   }

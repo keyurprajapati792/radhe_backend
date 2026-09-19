@@ -17,6 +17,7 @@ class WorkerService {
   async getWorkers(query = {}) {
     const page = parseInt(query.page) || 1;
     const limit = parseInt(query.limit) || 10;
+
     const search = query.search || "";
     const status = query.status || "";
     const locationId = query.locationId || "";
@@ -30,16 +31,38 @@ class WorkerService {
       filter.locationId = Number(locationId);
     }
 
-    // Persisted statuses only
-    if (status && status !== "occupied") {
+    /*
+     * available and occupied are derived statuses.
+     *
+     * Both start with workers whose stored status is "available".
+     * Their actual status is determined by running ProductionSlots.
+     */
+    if (status === "available" || status === "occupied") {
+      filter.status = "available";
+    } else if (status) {
       filter.status = status;
     }
 
     if (search) {
       filter.$or = [
-        { firstName: { $regex: search, $options: "i" } },
-        { lastName: { $regex: search, $options: "i" } },
-        { phone: { $regex: search, $options: "i" } },
+        {
+          firstName: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          lastName: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          phone: {
+            $regex: search,
+            $options: "i",
+          },
+        },
       ];
     }
 
@@ -47,75 +70,98 @@ class WorkerService {
       filter.skills = skill;
     }
 
-    let occupiedWorkerIds = [];
+    /*
+     * For available / occupied we need to calculate the actual
+     * worker status first, so we cannot paginate the Worker query
+     * before that calculation.
+     */
+    if (status === "available" || status === "occupied") {
+      const workers = await Worker.find(filter)
+        .populate("skills", "name currentHourlyCost")
+        .sort({ createdAt: -1 })
+        .lean();
 
-    // If requesting occupied workers, first determine who is occupied
-    if (status === "occupied") {
+      const workerIds = workers.map((worker) => worker._id);
+
+      /*
+       * Find all workers currently involved in running slots.
+       */
       const runningSlots = await ProductionSlot.find({
         status: "running",
+        "workers.workerId": {
+          $in: workerIds,
+        },
       })
         .select("workers")
         .lean();
 
-      occupiedWorkerIds = [
+      const occupiedWorkerIds = [
         ...new Set(
           runningSlots.flatMap((slot) =>
-            slot.workers.map((worker) => worker.workerId.toString()),
+            (slot.workers || []).map((worker) => worker.workerId.toString()),
           ),
         ),
       ];
 
-      filter._id = { $in: occupiedWorkerIds };
+      const occupiedSet = new Set(occupiedWorkerIds);
+
+      /*
+       * Calculate the actual worker status.
+       */
+      let formattedWorkers = workers.map((worker) => {
+        const isOccupied = occupiedSet.has(worker._id.toString());
+
+        return {
+          ...worker,
+          status: isOccupied ? "occupied" : "available",
+        };
+      });
+
+      /*
+       * Apply the requested derived status.
+       */
+      formattedWorkers = formattedWorkers.filter(
+        (worker) => worker.status === status,
+      );
+
+      const total = formattedWorkers.length;
+
+      /*
+       * Paginate AFTER calculating the derived status.
+       */
+      const paginatedWorkers = formattedWorkers.slice(skip, skip + limit);
+
+      return {
+        success: true,
+        statustype: "OK",
+        data: paginatedWorkers,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      };
     }
 
+    /*
+     * Normal persisted statuses.
+     */
     const [workers, total] = await Promise.all([
       Worker.find(filter)
         .populate("skills", "name currentHourlyCost")
+        .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
 
       Worker.countDocuments(filter),
     ]);
 
-    // Only required when we're NOT already filtering by occupied
-    if (status !== "occupied") {
-      const workerIds = workers.map((worker) => worker._id);
-
-      const runningSlots = await ProductionSlot.find({
-        status: "running",
-        "workers.workerId": { $in: workerIds },
-      })
-        .select("workers")
-        .lean();
-
-      occupiedWorkerIds = [
-        ...new Set(
-          runningSlots.flatMap((slot) =>
-            slot.workers.map((worker) => worker.workerId.toString()),
-          ),
-        ),
-      ];
-    }
-
-    const occupiedSet = new Set(occupiedWorkerIds);
-
-    const formattedWorkers = workers.map((worker) => {
-      const data = worker.toObject();
-
-      if (
-        data.status === "available" &&
-        occupiedSet.has(worker._id.toString())
-      ) {
-        data.status = "occupied";
-      }
-
-      return data;
-    });
-
     return {
       success: true,
       statustype: "OK",
-      data: formattedWorkers,
+      data: workers,
       meta: {
         total,
         page,
