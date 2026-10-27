@@ -242,52 +242,88 @@ class WorkerService {
   async getWorkerUtilizationReport(query = {}) {
     const { locationId, startDate, endDate } = query;
 
+    if (!startDate || !endDate) {
+      throw new Error("startDate and endDate are required");
+    }
+
+    const rangeStart = new Date(startDate);
+    const rangeEnd = new Date(endDate);
+
+    if (
+      Number.isNaN(rangeStart.getTime()) ||
+      Number.isNaN(rangeEnd.getTime()) ||
+      rangeStart >= rangeEnd
+    ) {
+      throw new Error("Invalid date range");
+    }
+
     const workerFilter = {};
 
-    if (locationId) {
+    if (locationId !== undefined && locationId !== null && locationId !== "") {
       workerFilter.locationId = Number(locationId);
     }
 
-    const workers = await Worker.find(workerFilter);
+    const workers = await Worker.find(workerFilter).lean();
 
     const report = await Promise.all(
       workers.map(async (worker) => {
         const slots = await ProductionSlot.find({
           "workers.workerId": worker._id,
-          startTime: {
-            $gte: new Date(startDate),
-            $lte: new Date(endDate),
-          },
-        });
+          plannedStartTime: { $lt: rangeEnd },
+          plannedEndTime: { $gt: rangeStart },
+        }).lean();
 
         let totalMinutes = 0;
         let overtimeMinutes = 0;
-        let jobsProcessed = new Set();
+        const jobsProcessed = new Set();
 
-        slots.forEach((slot) => {
-          const duration =
-            (new Date(slot.endTime) - new Date(slot.startTime)) / 1000 / 60;
-          totalMinutes += duration;
-          overtimeMinutes += slot.overtimeMinutes || 0;
-          jobsProcessed.add(String(slot.jobId));
-        });
+        for (const slot of slots) {
+          const slotStart = new Date(slot.plannedStartTime);
+          const slotEnd = new Date(slot.plannedEndTime);
 
-        const availableMinutes = await calculateAvailableMinutes(
-          startDate,
-          endDate,
-        );
-        const totalHours = +(totalMinutes / 60).toFixed(2);
+          if (
+            Number.isNaN(slotStart.getTime()) ||
+            Number.isNaN(slotEnd.getTime()) ||
+            slotEnd <= slotStart
+          ) {
+            continue;
+          }
+
+          // Count only the part of the slot inside the selected date range.
+          const effectiveStart = Math.max(
+            slotStart.getTime(),
+            rangeStart.getTime(),
+          );
+
+          const effectiveEnd = Math.min(slotEnd.getTime(), rangeEnd.getTime());
+
+          const durationMinutes = (effectiveEnd - effectiveStart) / 60000;
+
+          // Divide by worker effort when multiple workers share a slot.
+          const workerAssignment = slot.workers?.find(
+            (assignment) => String(assignment.workerId) === String(worker._id),
+          );
+
+          const effort = Number(workerAssignment?.effort ?? 100);
+
+          totalMinutes += durationMinutes * (effort / 100);
+          overtimeMinutes += Number(slot.overtimeMinutes) || 0;
+
+          if (slot.jobId) {
+            jobsProcessed.add(String(slot.jobId));
+          }
+        }
 
         const hours = Math.floor(totalMinutes / 60);
         const minutes = Math.round(totalMinutes % 60);
-        const totalTime = `${hours}h ${minutes}m`;
 
         return {
           workerId: worker._id,
-          workerName: `${worker.firstName} ${worker.lastName}`,
+          workerName:
+            `${worker.firstName || ""} ${worker.lastName || ""}`.trim(),
           overtimeHours: +(overtimeMinutes / 60).toFixed(2),
           jobsProcessed: jobsProcessed.size,
-          totalTime: totalTime,
+          totalTime: `${hours}h ${minutes}m`,
         };
       }),
     );
