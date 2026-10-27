@@ -315,6 +315,46 @@ class JobService {
       },
     };
   }
+
+  async deleteJob(jobId) {
+    const session = await mongoose.startSession();
+
+    try {
+      session.startTransaction();
+
+      const job = await Job.findById(jobId).session(session);
+
+      if (!job) {
+        const error = new Error("Job not found");
+        error.statusCode = 404;
+        throw error;
+      }
+
+      // Delete associated production slots
+      await ProductionSlot.deleteMany({ jobId: job._id }, { session });
+
+      // Delete associated job steps
+      await JobStep.deleteMany({ jobId: job._id }, { session });
+
+      // Delete the job
+      await Job.deleteOne({ _id: job._id }, { session });
+
+      await session.commitTransaction();
+
+      return {
+        success: true,
+        message: "Job and associated records deleted successfully",
+      };
+    } catch (err) {
+      if (session.inTransaction()) {
+        await session.abortTransaction();
+      }
+
+      throw err;
+    } finally {
+      await session.endSession();
+    }
+  }
 }
 
 export default new JobService();

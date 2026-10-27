@@ -9,5 +9,6 @@ router.get("/:id/planning", JobController.getJobPlanningData);
 router.get("/:id", JobController.getJobById);
 router.patch("/:id/status", JobController.updateJobStatus);
 router.get("/", JobController.getJobs);
+router.delete("/:id", JobController.deleteJob);
 
 export default router;

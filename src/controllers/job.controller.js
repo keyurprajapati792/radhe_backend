@@ -67,6 +67,18 @@ class JobController {
       });
     }
   }
+  async deleteJob(req, res) {
+    try {
+      const response = await JobService.deleteJob(req.params.id);
+
+      return res.status(200).json(response);
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({
+        success: false,
+        message: err.message,
+      });
+    }
+  }
 }
 
 export default new JobController();
